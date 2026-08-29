@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>Gemini SSO Launcher POC</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <p class="eyebrow">ONLINE EXTENSION-ONLY POC</p>
+        <h1>เปิด Gemini ผ่าน Edge extension</h1>
+        <p class="lead">
+          หน้านี้ทำงานจาก Firebase Hosting จริงและติดต่อ extension โดยตรง
+          ไม่มี local server, PowerShell หรือ custom protocol ใน runtime flow
+        </p>
+      </header>
+
+      <section class="card" aria-labelledby="connection-title">
+        <div class="status-row">
+          <div>
+            <p class="label" id="connection-title">Extension connection</p>
+            <p id="connection-detail">กำลังตรวจสอบ extension…</p>
+          </div>
+          <span id="connection-badge" class="badge pending">Checking</span>
+        </div>
+
+        <button id="launch-button" type="button" disabled>
+          เปิด Gemini
+        </button>
+        <button id="retry-button" class="secondary" type="button">
+          ตรวจ extension อีกครั้ง
+        </button>
+      </section>
+
+      <section class="card evidence" aria-labelledby="evidence-title">
+        <h2 id="evidence-title">หลักฐานจาก extension</h2>
+        <dl>
+          <div><dt>Request</dt><dd id="request-value">—</dd></div>
+          <div><dt>Stage</dt><dd id="stage-value">ยังไม่ได้เริ่ม</dd></div>
+          <div><dt>Observed origin</dt><dd id="origin-value">—</dd></div>
+          <div><dt>Gemini document</dt><dd id="document-value">—</dd></div>
+        </dl>
+        <p id="truth-note" class="notice">
+          POC นี้ยืนยันการเชื่อมต่อ extension และ lifecycle ของแท็บที่เปิดจริง
+          แต่ไม่อ้างว่ายืนยันตัวตนหรือ entitlement ของบัญชี Gemini
+        </p>
+      </section>
+
+      <details class="card">
+        <summary>ติดตั้ง extension ครั้งแรก</summary>
+        <ol>
+          <li>ดาวน์โหลดและแตกไฟล์ extension</li>
+          <li>เปิด <code>edge://extensions</code> และเปิด Developer mode</li>
+          <li>เลือก Load unpacked แล้วเลือกโฟลเดอร์ <code>extension</code></li>
+          <li>กลับมาหน้านี้และกด “ตรวจ extension อีกครั้ง”</li>
+        </ol>
+        <p>Extension ID ที่กำหนดตายตัว: <code id="extension-id"></code></p>
+      </details>
+    </main>
+    <footer>
+      Firebase Hosting · Static only · No idle compute
+    </footer>
+  </body>
+</html>
+
