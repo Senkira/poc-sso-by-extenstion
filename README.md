@@ -39,9 +39,10 @@ POC **ไม่อ้าง** ว่าพิสูจน์ Google identity, Ge
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1
+node .\tests\service-worker.test.js
 ```
 
-สคริปต์นี้ใช้เฉพาะตอนพัฒนา ไม่อยู่ใน runtime flow ของผู้ใช้
+สคริปต์เหล่านี้ใช้เฉพาะตอนพัฒนา ไม่อยู่ใน runtime flow ของผู้ใช้
 
 สร้าง ZIP ใหม่หลังแก้ source ของ extension ด้วย:
 
