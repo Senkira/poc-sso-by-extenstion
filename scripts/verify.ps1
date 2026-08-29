@@ -25,6 +25,23 @@ if ($html -match '(?i)(https?://)?(localhost|127\.0\.0\.1)(:\d+)?') { throw 'Hos
 if (-not (Test-Path -LiteralPath $archivePath)) { throw 'Hosted extension archive is missing.' }
 if ($html -notmatch '/downloads/gemini-sso-launcher-extension-v0\.1\.0\.zip') { throw 'Hosted page does not link the extension archive.' }
 
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$archive = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
+try {
+  $expectedEntries = @('content-script.js', 'manifest.json', 'service-worker.js')
+  $actualEntries = @($archive.Entries | ForEach-Object FullName | Sort-Object)
+  if (($actualEntries -join '|') -ne (($expectedEntries | Sort-Object) -join '|')) { throw 'Hosted extension archive has unexpected entries.' }
+  foreach ($entryName in $expectedEntries) {
+    $entry = $archive.GetEntry($entryName)
+    $reader = New-Object System.IO.StreamReader($entry.Open())
+    try { $archiveText = $reader.ReadToEnd() } finally { $reader.Dispose() }
+    $sourceText = Get-Content -Raw -LiteralPath (Join-Path $projectRoot "extension\$entryName")
+    if ($archiveText.Replace("`r`n", "`n") -ne $sourceText.Replace("`r`n", "`n")) { throw "Hosted archive entry is stale: $entryName" }
+  }
+} finally {
+  $archive.Dispose()
+}
+
 $publicKey = [Convert]::FromBase64String($manifest.key)
 $sha256 = [System.Security.Cryptography.SHA256]::Create()
 try {

@@ -65,4 +65,4 @@ npx --yes firebase-tools deploy --only hosting --project poc-after-sso-login-gem
 4. หน้า hosted ต้องแสดง request UUID และ `WINDOW_CREATED`
 5. ถ้าต้อง login หน้า status ต้องรายงาน `GOOGLE_SIGN_IN_REQUIRED`/`GOOGLE_SIGN_IN_PAGE_LOADED`
 6. หลังถึง Gemini ต้องรายงาน `GEMINI_DOCUMENT_OBSERVED`
-7. ปิด window แล้ว status ต้องเป็น `WINDOW_CLOSED`
+7. ปิด tab/window แล้ว status ต้องเป็น `TAB_CLOSED`

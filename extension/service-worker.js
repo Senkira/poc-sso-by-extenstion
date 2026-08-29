@@ -4,6 +4,7 @@ const PROTOCOL_VERSION = 1;
 const ALLOWED_ORIGIN = "https://poc-after-sso-login-gemini.web.app";
 const GEMINI_URL = "https://gemini.google.com/app";
 const RUN_TTL_MS = 10 * 60 * 1000;
+const runUpdates = new Map();
 
 function runKey(requestId) {
   return `run:${requestId}`;
@@ -44,6 +45,26 @@ async function getRun(requestId) {
   }
 
   return run;
+}
+
+async function updateRun(requestId, mutate) {
+  const previous = runUpdates.get(requestId) || Promise.resolve();
+  const task = previous.catch(() => {}).then(async () => {
+    const run = await getRun(requestId);
+    if (!run || mutate(run) === false) {
+      return run;
+    }
+    return putRun(run);
+  });
+  runUpdates.set(requestId, task);
+
+  try {
+    return await task;
+  } finally {
+    if (runUpdates.get(requestId) === task) {
+      runUpdates.delete(requestId);
+    }
+  }
 }
 
 function publicRun(run) {
@@ -97,12 +118,15 @@ async function openGemini(message) {
       throw new Error("Edge did not return the created tab.");
     }
 
-    run.windowId = createdWindow.id;
-    run.tabId = tab.id;
-    run.stage = "WINDOW_CREATED";
     await chrome.storage.session.set({ [tabKey(tab.id)]: message.requestId });
-    await putRun(run);
-    return { ok: true, run: publicRun(run), replayed: false };
+    const savedRun = await updateRun(message.requestId, (current) => {
+      current.windowId = createdWindow.id;
+      current.tabId = tab.id;
+      if (current.stage === "OPENING_WINDOW") {
+        current.stage = "WINDOW_CREATED";
+      }
+    });
+    return { ok: true, run: publicRun(savedRun), replayed: false };
   } catch (error) {
     run.stage = "OPEN_FAILED";
     run.note = error instanceof Error ? error.message : "Unknown launch error";
@@ -162,11 +186,6 @@ async function updateNavigation(details, completed) {
     return;
   }
 
-  const run = await getRun(requestId);
-  if (!run || run.closed) {
-    return;
-  }
-
   let url;
   try {
     url = new URL(details.url);
@@ -174,15 +193,26 @@ async function updateNavigation(details, completed) {
     return;
   }
 
-  run.observedOrigin = url.origin;
-  if (url.origin === "https://accounts.google.com") {
-    run.stage = completed ? "GOOGLE_SIGN_IN_PAGE_LOADED" : "GOOGLE_SIGN_IN_REQUIRED";
-  } else if (url.origin === "https://gemini.google.com") {
-    run.stage = completed ? "GEMINI_DOCUMENT_LOADED" : "GEMINI_NAVIGATED";
-  } else {
-    run.stage = completed ? "OTHER_PAGE_LOADED" : "OTHER_PAGE_NAVIGATED";
-  }
-  await putRun(run);
+  const navigationAt = Number.isFinite(details.timeStamp) ? details.timeStamp : Date.now();
+  await updateRun(requestId, (run) => {
+    if (run.closed || navigationAt < (run.lastNavigationAt || 0)) {
+      return false;
+    }
+
+    run.lastNavigationAt = navigationAt;
+    run.observedOrigin = url.origin;
+    if (url.origin === "https://accounts.google.com") {
+      run.stage = completed ? "GOOGLE_SIGN_IN_PAGE_LOADED" : "GOOGLE_SIGN_IN_REQUIRED";
+    } else if (url.origin === "https://gemini.google.com") {
+      run.stage = run.documentObserved
+        ? "GEMINI_DOCUMENT_OBSERVED"
+        : completed
+          ? "GEMINI_DOCUMENT_LOADED"
+          : "GEMINI_NAVIGATED";
+    } else {
+      run.stage = completed ? "OTHER_PAGE_LOADED" : "OTHER_PAGE_NAVIGATED";
+    }
+  });
 }
 
 chrome.webNavigation.onCommitted.addListener((details) => {
@@ -193,6 +223,29 @@ chrome.webNavigation.onCompleted.addListener((details) => {
   updateNavigation(details, true).catch(() => {});
 });
 
+chrome.webNavigation.onErrorOccurred.addListener((details) => {
+  if (details.frameId !== 0) {
+    return;
+  }
+
+  (async () => {
+    const mapping = await chrome.storage.session.get(tabKey(details.tabId));
+    const requestId = mapping[tabKey(details.tabId)];
+    if (!requestId) {
+      return;
+    }
+    const navigationAt = Number.isFinite(details.timeStamp) ? details.timeStamp : Date.now();
+    await updateRun(requestId, (run) => {
+      if (run.closed || navigationAt < (run.lastNavigationAt || 0)) {
+        return false;
+      }
+      run.lastNavigationAt = navigationAt;
+      run.stage = "NAVIGATION_ERROR";
+      run.note = details.error || "Navigation failed";
+    });
+  })().catch(() => {});
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type !== "GEMINI_DOCUMENT_SIGNAL" || !Number.isInteger(sender.tab?.id)) {
     return false;
@@ -201,31 +254,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     const mapping = await chrome.storage.session.get(tabKey(sender.tab.id));
     const requestId = mapping[tabKey(sender.tab.id)];
-    const run = requestId ? await getRun(requestId) : null;
-    if (!run || run.closed) {
+    if (!requestId) {
       sendResponse({ ok: false });
       return;
     }
 
-    run.stage = "GEMINI_DOCUMENT_OBSERVED";
-    run.observedOrigin = "https://gemini.google.com";
-    run.documentObserved = true;
-    await putRun(run);
-    sendResponse({ ok: true });
+    const run = await updateRun(requestId, (current) => {
+      if (current.closed) {
+        return false;
+      }
+      current.stage = "GEMINI_DOCUMENT_OBSERVED";
+      current.observedOrigin = "https://gemini.google.com";
+      current.documentObserved = true;
+    });
+    sendResponse({ ok: Boolean(run && !run.closed) });
   })().catch(() => sendResponse({ ok: false }));
   return true;
 });
 
-chrome.windows.onRemoved.addListener((windowId) => {
+chrome.tabs.onRemoved.addListener((tabId) => {
   (async () => {
-    const all = await chrome.storage.session.get(null);
-    for (const [key, value] of Object.entries(all)) {
-      if (!key.startsWith("run:") || value.windowId !== windowId || value.closed) {
-        continue;
-      }
-      value.closed = true;
-      value.stage = "WINDOW_CLOSED";
-      await putRun(value);
+    const mapping = await chrome.storage.session.get(tabKey(tabId));
+    const requestId = mapping[tabKey(tabId)];
+    if (!requestId) {
+      return;
     }
+    await updateRun(requestId, (run) => {
+      run.closed = true;
+      run.stage = "TAB_CLOSED";
+    });
+    await chrome.storage.session.remove(tabKey(tabId));
   })().catch(() => {});
 });
