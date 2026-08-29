@@ -5,6 +5,7 @@ $manifestPath = Join-Path $projectRoot 'extension\manifest.json'
 $firebasePath = Join-Path $projectRoot 'firebase.json'
 $appPath = Join-Path $projectRoot 'public\app.js'
 $htmlPath = Join-Path $projectRoot 'public\index.html'
+$archivePath = Join-Path $projectRoot 'public\downloads\gemini-sso-launcher-extension-v0.1.0.zip'
 
 $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
 $firebase = Get-Content -Raw -LiteralPath $firebasePath | ConvertFrom-Json
@@ -21,6 +22,8 @@ if ($manifest.permissions -contains 'downloads') { throw 'downloads permission i
 if ($app -notmatch [regex]::Escape($expectedExtensionId)) { throw 'Hosted app extension ID does not match the fixed manifest key.' }
 if ($firebase.hosting.site -ne 'poc-after-sso-login-gemini') { throw 'Wrong Firebase Hosting site.' }
 if ($html -match '(?i)(https?://)?(localhost|127\.0\.0\.1)(:\d+)?') { throw 'Hosted page references a local runtime endpoint.' }
+if (-not (Test-Path -LiteralPath $archivePath)) { throw 'Hosted extension archive is missing.' }
+if ($html -notmatch '/downloads/gemini-sso-launcher-extension-v0\.1\.0\.zip') { throw 'Hosted page does not link the extension archive.' }
 
 $publicKey = [Convert]::FromBase64String($manifest.key)
 $sha256 = [System.Security.Cryptography.SHA256]::Create()
@@ -43,4 +46,5 @@ Write-Output 'PASS exact-hosted-origin'
 Write-Output 'PASS extension-only-no-native-host'
 Write-Output 'PASS fixed-extension-id'
 Write-Output 'PASS static-firebase-hosting'
+Write-Output 'PASS hosted-extension-archive'
 Write-Output 'PASS no-node-project-dependency'

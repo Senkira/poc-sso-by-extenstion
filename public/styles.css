@@ -105,6 +105,8 @@ dd { margin: 0; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regul
 details summary { cursor: pointer; font-weight: 750; }
 details ol { margin-bottom: 0; padding-left: 22px; color: #cbd1e4; line-height: 1.7; }
 code { color: #b8c8ff; }
+a { color: #a9bcff; text-underline-offset: 0.18em; }
+a:hover { color: #d1dbff; }
 
 footer { padding: 20px 16px 40px; color: #737c99; text-align: center; font-size: 0.85rem; }
 
@@ -115,4 +117,3 @@ footer { padding: 20px 16px 40px; color: #737c99; text-align: center; font-size:
   button, button.secondary { width: 100%; margin: 8px 0 0; }
   dl div { grid-template-columns: 1fr; gap: 4px; }
 }
-

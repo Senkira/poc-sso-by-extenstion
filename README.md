@@ -27,10 +27,10 @@ POC **ไม่อ้าง** ว่าพิสูจน์ Google identity, Ge
 
 ## Install once in Edge
 
-1. เปิด `edge://extensions`
-2. เปิด Developer mode
-3. เลือก **Load unpacked**
-4. เลือกโฟลเดอร์ `extension`
+1. ดาวน์โหลด ZIP จาก <https://poc-after-sso-login-gemini.web.app/downloads/gemini-sso-launcher-extension-v0.1.0.zip> และแตกไฟล์
+2. เปิด `edge://extensions`
+3. เปิด Developer mode
+4. เลือก **Load unpacked** แล้วเลือกโฟลเดอร์ที่แตกไฟล์
 5. ตรวจว่า Extension ID คือ `jeenmgigpkffleijbmfciffiodlcdafh`
 
 หลังติดตั้งแล้วให้ใช้งานจาก <https://poc-after-sso-login-gemini.web.app/> เท่านั้น Origin อื่นไม่สามารถส่งคำสั่งเข้า extension ได้
@@ -42,6 +42,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 ```
 
 สคริปต์นี้ใช้เฉพาะตอนพัฒนา ไม่อยู่ใน runtime flow ของผู้ใช้
+
+สร้าง ZIP ใหม่หลังแก้ source ของ extension ด้วย:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\package-extension.ps1
+```
 
 ## Deploy
 
@@ -60,4 +66,3 @@ npx --yes firebase-tools deploy --only hosting --project poc-after-sso-login-gem
 5. ถ้าต้อง login หน้า status ต้องรายงาน `GOOGLE_SIGN_IN_REQUIRED`/`GOOGLE_SIGN_IN_PAGE_LOADED`
 6. หลังถึง Gemini ต้องรายงาน `GEMINI_DOCUMENT_OBSERVED`
 7. ปิด window แล้ว status ต้องเป็น `WINDOW_CLOSED`
-
