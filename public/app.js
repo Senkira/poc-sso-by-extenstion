@@ -78,6 +78,7 @@ async function pollStatus() {
   if (!activeRequestId) {
     return;
   }
+  const requestId = activeRequestId;
 
   if (Date.now() - pollStartedAt > POLL_TIMEOUT_MS) {
     clearInterval(pollTimer);
@@ -90,14 +91,21 @@ async function pollStatus() {
     const response = await sendToExtension({
       type: "GET_STATUS",
       version: PROTOCOL_VERSION,
-      requestId: activeRequestId
+      requestId
     });
+    if (requestId !== activeRequestId) {
+      return;
+    }
     if (response?.ok) {
       renderRun(response.run);
       if (response.run.closed || response.run.stage === "OPEN_FAILED") {
         clearInterval(pollTimer);
         pollTimer = null;
       }
+    } else {
+      clearInterval(pollTimer);
+      pollTimer = null;
+      elements.stageValue.textContent = response?.error || "STATUS_UNAVAILABLE";
     }
   } catch {
     clearInterval(pollTimer);
@@ -107,7 +115,10 @@ async function pollStatus() {
 }
 
 async function launchGemini() {
+  clearInterval(pollTimer);
+  pollTimer = null;
   activeRequestId = crypto.randomUUID();
+  const requestId = activeRequestId;
   pollStartedAt = Date.now();
   elements.launchButton.disabled = true;
   elements.requestValue.textContent = activeRequestId;
@@ -119,8 +130,11 @@ async function launchGemini() {
     const response = await sendToExtension({
       type: "OPEN_GEMINI",
       version: PROTOCOL_VERSION,
-      requestId: activeRequestId
+      requestId
     });
+    if (requestId !== activeRequestId) {
+      return;
+    }
     if (!response?.ok) {
       throw new Error(response?.error || "OPEN_FAILED");
     }
@@ -138,4 +152,3 @@ async function launchGemini() {
 elements.launchButton.addEventListener("click", launchGemini);
 elements.retryButton.addEventListener("click", checkExtension);
 checkExtension();
-

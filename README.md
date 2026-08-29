@@ -66,3 +66,4 @@ npx --yes firebase-tools deploy --only hosting --project poc-after-sso-login-gem
 5. ถ้าต้อง login หน้า status ต้องรายงาน `GOOGLE_SIGN_IN_REQUIRED`/`GOOGLE_SIGN_IN_PAGE_LOADED`
 6. หลังถึง Gemini ต้องรายงาน `GEMINI_DOCUMENT_OBSERVED`
 7. ปิด tab/window แล้ว status ต้องเป็น `TAB_CLOSED`
+8. หาก reload/update extension ระหว่าง run หน้าเว็บต้องรายงาน `RUN_NOT_FOUND` ไม่ค้างหรือแสดง success เก่า

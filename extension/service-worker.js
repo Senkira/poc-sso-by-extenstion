@@ -5,6 +5,7 @@ const ALLOWED_ORIGIN = "https://poc-after-sso-login-gemini.web.app";
 const GEMINI_URL = "https://gemini.google.com/app";
 const RUN_TTL_MS = 10 * 60 * 1000;
 const runUpdates = new Map();
+const openOperations = new Map();
 
 function runKey(requestId) {
   return `run:${requestId}`;
@@ -86,11 +87,7 @@ function publicRun(run) {
   };
 }
 
-async function openGemini(message) {
-  if (message.version !== PROTOCOL_VERSION || !isRequestId(message.requestId)) {
-    return { ok: false, error: "INVALID_REQUEST" };
-  }
-
+async function openGeminiOnce(message) {
   const existing = await getRun(message.requestId);
   if (existing) {
     return { ok: true, run: publicRun(existing), replayed: true };
@@ -133,6 +130,25 @@ async function openGemini(message) {
     await putRun(run);
     return { ok: false, error: "OPEN_FAILED", run: publicRun(run) };
   }
+}
+
+function openGemini(message) {
+  if (message.version !== PROTOCOL_VERSION || !isRequestId(message.requestId)) {
+    return Promise.resolve({ ok: false, error: "INVALID_REQUEST" });
+  }
+
+  const pending = openOperations.get(message.requestId);
+  if (pending) {
+    return pending.then((result) => ({ ...result, replayed: true }));
+  }
+
+  const operation = openGeminiOnce(message);
+  openOperations.set(message.requestId, operation);
+  return operation.finally(() => {
+    if (openOperations.get(message.requestId) === operation) {
+      openOperations.delete(message.requestId);
+    }
+  });
 }
 
 async function getStatus(message) {
