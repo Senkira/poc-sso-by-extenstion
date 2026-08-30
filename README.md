@@ -1,42 +1,52 @@
 # poc-sso-gemini-login-by-extension
 
-Lean proof of concept สำหรับให้หน้าเว็บ Firebase Hosting จริงสั่ง Google Chrome หรือ Microsoft Edge extension ที่ติดตั้งครั้งเดียวทำ login automation ไปยัง Gemini โดยรหัสผ่านไม่ผ่านเว็บและไม่ถูกเก็บใน extension storage
+Lean online POC ที่ให้ Firebase Hosting สั่ง Chrome/Edge extension ซึ่งติดตั้งครั้งเดียวให้เปิด flow ไปยัง Gemini โดย extension ไม่อ่าน รับ เก็บ หรือ inject รหัสผ่าน
 
-Chrome และ Edge ใช้ **extension package เดียวกัน** ไม่ต้องแยก source หรือ build เพราะ POC ใช้เฉพาะ Chromium Manifest V3 APIs ที่รองรับร่วมกัน
+Chrome และ Edge ใช้ extension package เดียวกัน เพราะใช้ Chromium Manifest V3 APIs ชุดเดียวกัน
 
-## Runtime architecture
+## Architecture ที่พิสูจน์ได้จริง
 
 ```text
-https://poc-after-sso-login-gemini.web.app/
-  -> chrome.runtime.sendMessage(fixed extension ID)
-  -> MV3 service worker validates the exact hosted origin
-  -> service worker opens Google AccountChooser in a normal window
-  -> extension selects the fixed target account/email
-  -> only when Google's password form exists, extension opens its one-run pass-through page
-  -> user submits once; the service worker immediately forwards it to the exact Google tab/document
-  -> service worker injects it directly into that exact tracked Google tab/document
-  -> the extension page clears the field before awaiting the result; no password is written to storage
-  -> hosted page polls truthful lifecycle status
+Firebase static site
+  -> fixed-ID MV3 extension
+  -> Google AccountChooser
+  -> extension เลือก codeassist.04@easybuy.co.th
+  -> Google / browser password manager / Corporate IdP เป็นผู้ authenticate
+  -> extension ไม่แตะค่า credential และสังเกต navigation เท่านั้น
+  -> Gemini content script ตรวจ account controls ที่ render แล้ว
+  -> hosted page แสดง lifecycle และ target-account evidence
 ```
 
-ไม่มี local server, Node.js, PowerShell, custom protocol หรือ Native Messaging ใน runtime flow เครื่องผู้ใช้ต้องมีเพียง Google Chrome หรือ Microsoft Edge และ extension ที่ติดตั้งครั้งเดียว
+ไม่มี local server, Node.js, PowerShell, custom protocol, Native Messaging, Functions หรือ Cloud Run ใน runtime ของเครื่องปลายทาง เครื่องปลายทางต้องมีเพียง Chrome หรือ Edge และ extension ที่ติดตั้งครั้งเดียว
 
-## What the POC proves
+## Credential boundary
 
-- หน้า launcher มาจาก Firebase Hosting URL จริง
-- หน้าเว็บติดต่อ extension package/ID ที่กำหนดไว้จริง
-- extension เป็นผู้สร้าง Chrome/Edge window, เลือกบัญชีเป้าหมาย และส่งผ่านรหัสผ่านเฉพาะเมื่อพบ Google password form ใน exact tracked tab
-- hosted Firebase page ไม่รับ อ่าน หรือส่งรหัสผ่าน
-- service worker ไม่เขียนรหัสผ่านลง `chrome.storage`, run telemetry, log, source, package หรือ Git
-- หาก service worker/Port ถูกตัดก่อนส่งผ่าน หน้า credential จะล้างค่าและ run จะ fail closed
-- extension ผูก navigation/document observations กับ request และ tab ที่สร้าง
-- หาก Google ขอ MFA, CAPTCHA หรือ device confirmation จะรายงาน `USER_ACTION_REQUIRED` และหยุด automation
+Extension ทำได้:
 
-นี่คือ **browser login automation POC ไม่ใช่ OAuth/enterprise SSO** และไม่ควรใช้เป็น production credential vault. POC ยังไม่อ้าง trusted attestation ของ Google identity หรือ Gemini entitlement; final browser acceptance ต้องตรวจ account ที่แสดงบน Gemini ด้วย
+- เปิด Google/Gemini ใน normal browser window
+- เลือกบัญชีเป้าหมายหรือกรอกเฉพาะ email เป้าหมาย
+- กด Google Next โดยไม่อ่านช่อง credential เพื่อให้ browser/IdP ดำเนินการ
+- ผูก request, tab และ exact document สำหรับ non-secret automation
+- รายงาน navigation, failure และ rendered target-account evidence
+
+Extension ไม่ทำ:
+
+- ไม่มีหน้า credential ของตัวเอง
+- ไม่รับ credential ผ่าน message
+- ไม่ query หรืออ่านช่อง credential
+- ไม่เขียน secret ลง storage/status/log/source/package
+- ไม่อ่านหรือสร้าง cookies
+- ไม่แปลง OAuth token เป็น Gemini web session
+
+ถ้า Google logout จริงและไม่มี saved browser credential, passkey หรือ IdP session อยู่เลย ระบบต้องรายงาน `USER_ACTION_REQUIRED` เพราะไม่มี authentication proof ให้ Google ใช้ นี่เป็น fail-closed behavior ไม่ใช่ success
+
+## Live evidence ที่ตรวจแล้ว
+
+บน Chrome profile ที่ใช้ตรวจ POC เมื่อวันที่ 2026-08-30 extension รุ่นก่อนเลือกบัญชีเป้าหมายสำเร็จ แต่ Google ไปที่หน้า `accounts.google.com/.../challenge/pwd` โดยตรง ไม่มี Corporate SSO redirect และไม่เดินต่อเอง หลักฐานนี้ทำให้ v0.4.0 เปลี่ยนเป็น secretless launcher และไม่อ้างว่า profile ดังกล่าวมี silent credential source
 
 ## Install once in Chrome or Edge
 
-1. ดาวน์โหลด ZIP จาก <https://poc-after-sso-login-gemini.web.app/downloads/gemini-sso-launcher-extension-v0.3.0.zip> และแตกไฟล์
+1. ดาวน์โหลด ZIP จาก <https://poc-after-sso-login-gemini.web.app/downloads/gemini-sso-launcher-extension-v0.4.0.zip> และแตกไฟล์
 2. Chrome เปิด `chrome://extensions` หรือ Edge เปิด `edge://extensions`
 3. เปิด Developer mode
 4. เลือก **Load unpacked** แล้วเลือกโฟลเดอร์ที่แตกไฟล์
@@ -44,19 +54,28 @@ https://poc-after-sso-login-gemini.web.app/
 
 หลังติดตั้งแล้วให้ใช้งานจาก <https://poc-after-sso-login-gemini.web.app/> เท่านั้น Origin อื่นไม่สามารถส่งคำสั่งเข้า extension ได้
 
+## One-time provisioning ที่ทำให้ zero-touch เป็นไปได้
+
+เลือกอย่างใดอย่างหนึ่งนอก extension:
+
+1. Google session ของบัญชีเป้าหมายยัง valid
+2. Chrome/Edge password manager มี saved credential และ policy อนุญาต autofill/automatic sign-in โดยไม่ถาม device confirmation
+3. Google Workspace federation redirect ไป Corporate IdP ซึ่งมี authenticated session อยู่แล้ว
+
+ถ้าไม่มีทั้งสามอย่าง zero-touch login จากสถานะ logout ทำไม่ได้ภายใต้ข้อจำกัดนี้
+
 ## Verify
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 node .\tests\service-worker.test.js
 node .\tests\content-script.test.js
-node .\tests\login.test.js
 node .\tests\app.test.js
 ```
 
-สคริปต์เหล่านี้ใช้เฉพาะตอนพัฒนา ไม่อยู่ใน runtime flow ของผู้ใช้
+Node และ PowerShell ใช้เฉพาะ development verification ไม่ถูก package และไม่อยู่ใน runtime flow
 
-สร้าง ZIP ใหม่หลังแก้ source ของ extension ด้วย:
+สร้าง ZIP หลังแก้ source:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\package-extension.ps1
@@ -64,25 +83,22 @@ powershell -ExecutionPolicy Bypass -File .\scripts\package-extension.ps1
 
 ## Deploy
 
-Firebase project/site ถูกกำหนดตายตัวเป็น `poc-after-sso-login-gemini` และใช้ static Hosting เท่านั้น ไม่มี Functions หรือ Cloud Run ดังนั้นไม่มี minimum replica หรือ idle compute ให้คิดค่าใช้จ่าย
+Firebase site กำหนดเป็น `poc-after-sso-login-gemini` และมี static Hosting เพียงอย่างเดียว ไม่มี minimum replica หรือ idle compute
 
 ```powershell
 npx --yes firebase-tools deploy --only hosting --project poc-after-sso-login-gemini
 ```
 
-## Manual acceptance test
+## Acceptance test
 
-1. เปิด hosted URL ใน Chrome/Edge profile ที่ติดตั้ง extension
-2. สถานะต้องเปลี่ยนเป็น `Connected`
-3. กด **เริ่ม login ผ่าน extension** และยืนยันว่า Google AccountChooser เปิดใน normal window
-4. extension ต้องเลือก `codeassist.04@easybuy.co.th` เอง และเปิดหน้า credential origin `chrome-extension://...` เฉพาะเมื่อ Google password form พร้อม
-5. กรอกรหัสผ่านในหน้า extension และกดส่งครั้งเดียว; ช่องต้องถูกล้างก่อนรอผลและไม่มีค่าใน `chrome.storage`
-6. หน้า hosted ต้องแสดงลำดับอย่างน้อย `GOOGLE_ACCOUNTS_*` -> `OPENING_PASSWORD_PASS_THROUGH` -> `PASSWORD_PASS_THROUGH_READY` -> `PASSWORD_SUBMITTED`
-7. หากมี MFA/CAPTCHA ต้องเป็น `USER_ACTION_REQUIRED`; หากไม่มีและถึง Gemini ต้องเป็น `GEMINI_DOCUMENT_OBSERVED`
-8. ตรวจหน้า Gemini ด้วยสายตาว่าเป็นบัญชีเป้าหมาย เพราะ telemetry เพียงอย่างเดียวไม่ยืนยัน identity
-9. ปิด exact tracked tab/window แล้ว status ต้องเป็น `TAB_CLOSED`
-10. หาก reload/update extension ระหว่าง run หน้าเว็บต้องรายงาน `RUN_NOT_FOUND` และ origin/document ต้องเป็น `Unavailable`
+1. เตรียม Chrome/Edge profile ให้ Google logout แต่มี saved browser credential หรือ authenticated Corporate IdP session
+2. ติดตั้ง extension v0.4.0 จาก hosted ZIP
+3. เปิด production Firebase URL และต้องเห็น `Connected`
+4. กดปุ่มหนึ่งครั้ง แล้วห้ามมี keyboard/mouse interaction หลังจากนั้น
+5. Extension ต้องเลือกบัญชี `codeassist.04@easybuy.co.th` เอง
+6. ห้ามมี extension-owned credential page และห้ามมี credential ใน extension messages/storage/logs
+7. ถ้า silent credential source ทำงาน ต้องไปถึง `GEMINI_TARGET_ACCOUNT_CONFIRMED`
+8. ถ้าไม่มี silent source, มี MFA/CAPTCHA/device confirmation หรือยืนยันบัญชีไม่ได้ ต้องจบด้วยสถานะ fail-closed ที่ตรงเหตุการณ์
+9. รันแยก Chrome และ Edge เพราะ password-manager/policy behavior ต่างกัน
 
-## Browser evidence status
-
-หลักฐานของ `0.1.0`/`0.2.0` เป็น launcher-only historical evidence และไม่นับเป็น acceptance ของ flow นี้ รุ่น `0.3.0` จะถือว่าผ่านเมื่อทดสอบ hosted URL + installed archive จริงครบตามรายการด้านบนทั้ง Chrome และ Edge ที่เป็น target
+`GEMINI_DOCUMENT_OBSERVED` อย่างเดียวไม่ถือว่าผ่าน target-account acceptance

@@ -9,9 +9,6 @@ const store = {};
 const listeners = {};
 const createdOptions = [];
 let scriptStep = "ACCOUNT_SELECTED";
-let submittedPassword = null;
-let passwordInjectionCount = 0;
-let releasePasswordInjection = null;
 let currentFrame = { url: "about:blank", documentId: "doc-blank" };
 const event = (name) => ({ addListener(listener) { listeners[name] = listener; } });
 
@@ -27,27 +24,14 @@ const chrome = {
   windows: {
     async create(options) {
       createdOptions.push(options);
-      if (createdOptions.length === 1) {
-        assert.equal(options.url.startsWith("https://accounts.google.com/AccountChooser?"), true);
-        currentFrame = { url: options.url, documentId: "doc-account-chooser" };
-        listeners.committed({
-          frameId: 0,
-          tabId: 61,
-          url: currentFrame.url,
-          timeStamp: Date.now(),
-          documentId: currentFrame.documentId
-        });
-        await new Promise((resolve) => setTimeout(resolve, 5));
-        return { id: 51, tabs: [{ id: 61 }] };
-      }
-      assert.match(options.url, /^chrome-extension:\/\/jeenmgigpkffleijbmfciffiodlcdafh\/login\.html\?requestId=.*&challengeId=/);
-      return { id: 50, tabs: [{ id: 60 }] };
+      assert.equal(options.url.startsWith("https://accounts.google.com/AccountChooser?"), true);
+      currentFrame = { url: options.url, documentId: "doc-account-chooser" };
+      return { id: 51, tabs: [{ id: 61 }] };
     }
   },
   runtime: {
     id: EXTENSION_ID,
-    getURL(path) { return `chrome-extension://${EXTENSION_ID}/${path}`; },
-    getManifest() { return { version: "0.3.0" }; },
+    getManifest() { return { version: "0.4.0" }; },
     onMessageExternal: event("external"),
     onMessage: event("internal")
   },
@@ -59,18 +43,13 @@ const chrome = {
   },
   scripting: {
     async executeScript(options) {
+      assert.deepEqual(Array.from(options.target.documentIds || []), [currentFrame.documentId]);
+      assert.deepEqual(Array.from(options.args), ["codeassist.04@easybuy.co.th"]);
       if (options.func.name === "performGoogleStep") {
-        assert.deepEqual(Array.from(options.args), ["codeassist.04@easybuy.co.th"]);
         return [{ result: { step: scriptStep } }];
       }
-      if (options.func.name === "submitGooglePassword") {
-        assert.deepEqual(Array.from(options.target.documentIds || []), ["doc-password"]);
-        passwordInjectionCount += 1;
-        submittedPassword = options.args[0];
-        if (releasePasswordInjection) {
-          await new Promise((resolve) => { releasePasswordInjection = resolve; });
-        }
-        return [{ result: { submitted: true } }];
+      if (options.func.name === "inspectPendingBrowserAuthentication") {
+        return [{ result: scriptStep }];
       }
       throw new Error("Unexpected injected function");
     }
@@ -88,10 +67,8 @@ vm.runInNewContext(
     Date,
     Number,
     Error,
-    setTimeout,
-    clearTimeout,
-    crypto: { randomUUID: () => "223e4567-e89b-42d3-a456-426614174000" },
-    encodeURIComponent
+    setTimeout(callback) { Promise.resolve().then(callback); return 1; },
+    clearTimeout() {}
   }
 );
 
@@ -112,14 +89,13 @@ async function flush(rounds = 3) {
 async function main() {
   const requestId = "123e4567-e89b-42d3-a456-426614174000";
   const [first, replay] = await Promise.all([
-    external({ type: "OPEN_GEMINI", version: 2, requestId }),
-    external({ type: "OPEN_GEMINI", version: 2, requestId })
+    external({ type: "OPEN_GEMINI", version: 3, requestId }),
+    external({ type: "OPEN_GEMINI", version: 3, requestId })
   ]);
   assert.equal(first.ok, true);
   assert.equal(replay.ok, true);
   assert.equal(createdOptions.length, 1, "same UUID must create exactly one Google window");
 
-  scriptStep = "ACCOUNT_SELECTED";
   listeners.completed({
     frameId: 0,
     tabId: 61,
@@ -128,6 +104,8 @@ async function main() {
     documentId: currentFrame.documentId
   });
   await flush();
+  let status = await external({ type: "GET_STATUS", version: 3, requestId });
+  assert.equal(status.run.stage, "ACCOUNT_SELECTED");
 
   currentFrame = { url: "https://accounts.google.com/v3/signin/challenge/pwd", documentId: "doc-password" };
   listeners.committed({
@@ -138,7 +116,7 @@ async function main() {
     documentId: currentFrame.documentId
   });
   await flush();
-  scriptStep = "PASSWORD_REQUIRED";
+  scriptStep = "BROWSER_CREDENTIAL_SUBMIT_REQUESTED";
   listeners.completed({
     frameId: 0,
     tabId: 61,
@@ -147,52 +125,20 @@ async function main() {
     documentId: currentFrame.documentId
   });
   await flush();
-  assert.equal(createdOptions.length, 2, "credential page must open only after Google password form detection");
-  const credentialUrl = new URL(createdOptions[1].url);
-  const challengeId = credentialUrl.searchParams.get("challengeId");
+  status = await external({ type: "GET_STATUS", version: 3, requestId });
+  assert.equal(status.run.stage, "BROWSER_CREDENTIAL_SUBMIT_REQUESTED");
+  assert.equal(createdOptions.length, 1, "extension must never open a credential page");
 
-  const oneTimeValue = "one-time-sensitive-value";
-  const passMessage = {
-    type: "PASS_PASSWORD",
-    version: 2,
-    requestId,
-    challengeId,
-    password: oneTimeValue
-  };
-  releasePasswordInjection = () => {};
-  const credentialSender = {
-    id: EXTENSION_ID,
-    frameId: 0,
-    tab: { id: 60 },
-    url: createdOptions[1].url
-  };
-  const firstPass = internal(passMessage, credentialSender);
-  await flush();
-  assert.equal(passwordInjectionCount, 1);
+  const source = fs.readFileSync("extension/service-worker.js", "utf8");
+  assert.doesNotMatch(source, /PASS_PASSWORD|submitGooglePassword|openCredentialPassThrough|login\.html/);
+  assert.doesNotMatch(source, /input\[type=['"]password|input\[name=['"]Passwd/);
+  assert.doesNotMatch(source, /chrome\.cookies|chrome\.identity/);
 
-  const replayMessage = {
-    type: "PASS_PASSWORD",
-    version: 2,
-    requestId,
-    challengeId,
-    password: "replay-sensitive-value"
-  };
-  const replayResult = await internal(replayMessage, credentialSender);
-  assert.equal(replayResult.ok, false, "concurrent replay must fail after atomic challenge consume");
-  assert.equal(replayMessage.password, "");
-  assert.equal(passwordInjectionCount, 1, "replay must not start a second injection");
-
-  const release = releasePasswordInjection;
-  releasePasswordInjection = null;
-  release();
-  const passResult = await firstPass;
-  assert.equal(passResult.ok, true);
-  assert.equal(passMessage.password, "", "worker must clear the received message field");
-  assert.equal(submittedPassword, oneTimeValue);
-  assert.equal(JSON.stringify(store).includes(oneTimeValue), false, "password must never enter extension storage");
-  const afterPassword = await external({ type: "GET_STATUS", version: 2, requestId });
-  assert.equal(JSON.stringify(afterPassword).includes(oneTimeValue), false, "password must never enter public status");
-  assert.equal(afterPassword.run.stage, "PASSWORD_SUBMITTED");
+  store[`run:${requestId}`].authAttemptAt = Date.now() - 5000;
+  scriptStep = "PASSWORD_CHALLENGE_REMAINS";
+  status = await external({ type: "GET_STATUS", version: 3, requestId });
+  assert.equal(status.run.stage, "USER_ACTION_REQUIRED");
+  assert.match(status.run.note, /No browser-managed credential/);
 
   currentFrame = { url: "https://gemini.google.com/app", documentId: "doc-gemini" };
   listeners.committed({
@@ -204,15 +150,37 @@ async function main() {
   });
   await flush();
   await internal(
-    { type: "GEMINI_DOCUMENT_SIGNAL", version: 2 },
+    {
+      type: "GEMINI_DOCUMENT_SIGNAL",
+      version: 3,
+      targetAccountObserved: true,
+      identityCheckComplete: true
+    },
     { frameId: 0, url: currentFrame.url, documentId: currentFrame.documentId, tab: { id: 61 } }
   );
-  const observed = await external({ type: "GET_STATUS", version: 2, requestId });
-  assert.equal(observed.run.stage, "GEMINI_DOCUMENT_OBSERVED");
-  assert.equal(observed.run.documentObserved, true);
+  status = await external({ type: "GET_STATUS", version: 3, requestId });
+  assert.equal(status.run.stage, "GEMINI_TARGET_ACCOUNT_CONFIRMED");
+  assert.equal(status.run.targetAccountConfirmed, true);
+
+  await internal(
+    {
+      type: "GEMINI_DOCUMENT_SIGNAL",
+      version: 3,
+      targetAccountObserved: false,
+      identityCheckComplete: true
+    },
+    { frameId: 0, url: currentFrame.url, documentId: currentFrame.documentId, tab: { id: 61 } }
+  );
+  status = await external({ type: "GET_STATUS", version: 3, requestId });
+  assert.equal(status.run.stage, "GEMINI_TARGET_ACCOUNT_CONFIRMED", "confirmed identity must not be downgraded");
 
   const wrongVersionResult = listeners.internal(
-    { type: "GEMINI_DOCUMENT_SIGNAL", version: 1 },
+    {
+      type: "GEMINI_DOCUMENT_SIGNAL",
+      version: 2,
+      targetAccountObserved: true,
+      identityCheckComplete: true
+    },
     { frameId: 0, url: currentFrame.url, documentId: currentFrame.documentId, tab: { id: 61 } },
     () => { throw new Error("wrong version must not respond"); }
   );
@@ -220,22 +188,20 @@ async function main() {
 
   listeners.tabRemoved(61);
   await flush();
-  const closed = await external({ type: "GET_STATUS", version: 2, requestId });
-  assert.equal(closed.run.stage, "TAB_CLOSED");
+  status = await external({ type: "GET_STATUS", version: 3, requestId });
+  assert.equal(status.run.stage, "TAB_CLOSED");
 
   const rejected = await external(
-    { type: "PING", version: 2 },
+    { type: "PING", version: 3 },
     { frameId: 0, url: "https://example.com/" }
   );
   assert.equal(rejected.error, "UNTRUSTED_SENDER");
 
-  console.log("PASS concurrent-google-window-idempotency");
-  console.log("PASS google-window-mapping-reconciliation");
-  console.log("PASS credential-page-opens-only-after-password-challenge");
-  console.log("PASS password-one-time-pass-through-no-storage-or-status");
-  console.log("PASS atomic-challenge-consume-blocks-concurrent-replay");
-  console.log("PASS password-injection-targets-exact-document-id");
-  console.log("PASS exact-document-observation");
+  console.log("PASS concurrent-window-idempotency");
+  console.log("PASS exact-document-non-secret-automation");
+  console.log("PASS no-extension-credential-page-or-message");
+  console.log("PASS browser-credential-unavailable-fails-closed");
+  console.log("PASS target-account-confirmation-is-monotonic");
   console.log("PASS exact-tab-close-state");
   console.log("PASS untrusted-origin-rejection");
 }

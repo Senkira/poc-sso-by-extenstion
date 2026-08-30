@@ -8,16 +8,28 @@ async function flush() {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
-async function runScenario(readyState) {
-  let calls = 0;
+async function runScenario({ readyState, initiallyVisible }) {
+  let visible = initiallyVisible;
   let loadListener = null;
   const scheduled = [];
+  const messages = [];
+  const accountNode = {
+    getAttribute(name) {
+      if (name === "aria-label" && visible) {
+        return "Google Account: codeassist.04@easybuy.co.th";
+      }
+      return null;
+    }
+  };
+  const document = {
+    readyState,
+    querySelectorAll() { return [accountNode]; }
+  };
   const chrome = {
     runtime: {
       async sendMessage(message) {
-        assert.equal(message.version, 2);
-        calls += 1;
-        return { ok: calls >= 2 };
+        messages.push({ ...message });
+        return { ok: true, confirmed: message.targetAccountObserved };
       }
     }
   };
@@ -26,7 +38,7 @@ async function runScenario(readyState) {
     fs.readFileSync("extension/content-script.js", "utf8"),
     {
       chrome,
-      document: { readyState },
+      document,
       location: { origin: "https://gemini.google.com" },
       window: { addEventListener(type, listener) { if (type === "load") loadListener = listener; } },
       setTimeout(callback, delay) { scheduled.push({ callback, delay }); }
@@ -34,25 +46,32 @@ async function runScenario(readyState) {
   );
 
   if (readyState !== "complete") {
-    assert.equal(calls, 0);
-    assert.equal(typeof loadListener, "function");
+    assert.equal(messages.length, 0);
     loadListener({ type: "load" });
   }
   await flush();
-  assert.equal(calls, 1);
-  assert.equal(scheduled.length, 1);
-  assert.equal(scheduled[0].delay, 100);
-  scheduled.shift().callback();
-  await flush();
-  assert.equal(calls, 2);
-  assert.equal(scheduled.length, 0);
+  assert.equal(messages[0].version, 3);
+  assert.equal(messages[0].targetAccountObserved, initiallyVisible);
+
+  if (!initiallyVisible) {
+    assert.equal(scheduled.length, 1);
+    visible = true;
+    scheduled.shift().callback();
+    await flush();
+    assert.equal(messages[1].targetAccountObserved, true);
+    assert.equal(messages[1].identityCheckComplete, true);
+    assert.equal(scheduled.length, 0);
+  } else {
+    assert.equal(messages[0].identityCheckComplete, true);
+    assert.equal(scheduled.length, 0);
+  }
 }
 
 async function main() {
-  await runScenario("complete");
-  await runScenario("interactive");
-  console.log("PASS content-signal-retry-after-mapping-race");
-  console.log("PASS load-event-does-not-replace-retry-counter");
+  await runScenario({ readyState: "complete", initiallyVisible: false });
+  await runScenario({ readyState: "interactive", initiallyVisible: true });
+  console.log("PASS target-account-observation-retries");
+  console.log("PASS load-event-keeps-zero-attempt-index");
 }
 
 main().catch((error) => {

@@ -1,10 +1,21 @@
 "use strict";
 
 const EXTENSION_ID = "jeenmgigpkffleijbmfciffiodlcdafh";
-const REQUIRED_EXTENSION_VERSION = "0.3.0";
-const PROTOCOL_VERSION = 2;
+const REQUIRED_EXTENSION_VERSION = "0.4.0";
+const PROTOCOL_VERSION = 3;
 const POLL_INTERVAL_MS = 1000;
 const POLL_TIMEOUT_MS = 2 * 60 * 1000;
+const TERMINAL_STAGES = new Set([
+  "GEMINI_TARGET_ACCOUNT_CONFIRMED",
+  "GEMINI_TARGET_ACCOUNT_NOT_CONFIRMED",
+  "USER_ACTION_REQUIRED",
+  "TARGET_ACCOUNT_NOT_CONFIRMED",
+  "GOOGLE_PAGE_UNRECOGNIZED",
+  "AUTOMATION_ERROR",
+  "NAVIGATION_ERROR",
+  "OPEN_FAILED",
+  "TAB_CLOSED"
+]);
 
 const elements = {
   connectionBadge: document.querySelector("#connection-badge"),
@@ -15,6 +26,8 @@ const elements = {
   stageValue: document.querySelector("#stage-value"),
   originValue: document.querySelector("#origin-value"),
   documentValue: document.querySelector("#document-value"),
+  accountValue: document.querySelector("#account-value"),
+  noteValue: document.querySelector("#note-value"),
   extensionId: document.querySelector("#extension-id")
 };
 
@@ -52,12 +65,20 @@ function renderRun(run) {
   elements.stageValue.textContent = run.stage;
   elements.originValue.textContent = run.observedOrigin || "—";
   elements.documentValue.textContent = run.documentObserved ? "Observed" : "Not observed";
+  elements.accountValue.textContent = run.targetAccountConfirmed
+    ? "Confirmed"
+    : run.identityCheckComplete
+      ? "Not confirmed"
+      : "Pending";
+  elements.noteValue.textContent = run.note || "—";
 }
 
 function renderUnavailable(stage) {
   elements.stageValue.textContent = stage;
   elements.originValue.textContent = "Unavailable";
   elements.documentValue.textContent = "Unavailable";
+  elements.accountValue.textContent = "Unavailable";
+  elements.noteValue.textContent = "—";
 }
 
 async function checkExtension() {
@@ -72,18 +93,22 @@ async function checkExtension() {
     if (response.protocolVersion !== PROTOCOL_VERSION) {
       setConnection(
         false,
-        `พบ Gemini extension v${response.version || "unknown"} ที่ใช้ protocol เก่า; กรุณากด Reload ที่หน้า extensions เพื่อใช้ v${REQUIRED_EXTENSION_VERSION}`
+        `พบ Gemini extension v${response.version || "unknown"} ที่ใช้ protocol เก่า; กรุณา Reload extension เพื่อใช้ v${REQUIRED_EXTENSION_VERSION}`
       );
       return;
     }
     if (response.version !== REQUIRED_EXTENSION_VERSION) {
       setConnection(
         false,
-        `พบ Gemini Login Bridge v${response.version || "unknown"} แต่เว็บต้องใช้ v${REQUIRED_EXTENSION_VERSION}; กรุณากด Reload ที่หน้า extensions`
+        `พบ Gemini extension v${response.version || "unknown"} แต่เว็บต้องใช้ v${REQUIRED_EXTENSION_VERSION}; กรุณา Reload extension`
       );
       return;
     }
-    setConnection(true, `เชื่อมต่อ Gemini Login Bridge v${response.version} แล้ว`);
+    if (response.capability !== "SECRETLESS_GOOGLE_SESSION_LAUNCHER") {
+      setConnection(false, "Extension ที่พบไม่ใช่ secretless launcher รุ่นที่กำหนด");
+      return;
+    }
+    setConnection(true, `เชื่อมต่อ Gemini Secretless Launcher v${response.version} แล้ว`);
   } catch {
     setConnection(false, "ไม่พบ extension ที่ติดตั้งและอนุญาตสำหรับเว็บนี้");
   }
@@ -141,7 +166,7 @@ async function pollStatus(run) {
       run.lastRenderedUpdatedAt = updatedAt;
       renderRun(response.run);
     }
-    if (response.run.closed || response.run.stage === "OPEN_FAILED") {
+    if (response.run.closed || TERMINAL_STAGES.has(response.run.stage)) {
       stopPolling(run);
       return;
     }
@@ -175,6 +200,8 @@ async function launchGemini() {
   elements.stageValue.textContent = "REQUESTING_EXTENSION";
   elements.originValue.textContent = "—";
   elements.documentValue.textContent = "—";
+  elements.accountValue.textContent = "Pending";
+  elements.noteValue.textContent = "—";
 
   try {
     const response = await sendToExtension({
@@ -186,16 +213,17 @@ async function launchGemini() {
       return;
     }
     if (!response?.ok || response.run?.requestId !== run.requestId) {
-      throw new Error(response?.error || "OPEN_FAILED");
+      renderUnavailable(response?.error || "OPEN_FAILED");
+      return;
     }
     run.lastRenderedUpdatedAt = Number(response.run.updatedAt) || 0;
     renderRun(response.run);
-    await pollStatus(run);
-  } catch (error) {
-    if (!isActive(run)) {
-      return;
+    schedulePoll(run);
+  } catch {
+    if (isActive(run)) {
+      renderUnavailable("CHANNEL_UNAVAILABLE");
+      setConnection(false, "ส่งคำสั่งเข้า extension ไม่สำเร็จ");
     }
-    renderUnavailable(error instanceof Error ? error.message : "OPEN_FAILED");
   } finally {
     if (isActive(run)) {
       elements.launchButton.disabled = false;
@@ -205,4 +233,4 @@ async function launchGemini() {
 
 elements.launchButton.addEventListener("click", launchGemini);
 elements.retryButton.addEventListener("click", checkExtension);
-checkExtension();
+void checkExtension();

@@ -6,13 +6,11 @@ $firebasePath = Join-Path $projectRoot 'firebase.json'
 $appPath = Join-Path $projectRoot 'public\app.js'
 $htmlPath = Join-Path $projectRoot 'public\index.html'
 $workerPath = Join-Path $projectRoot 'extension\service-worker.js'
-$loginPath = Join-Path $projectRoot 'extension\login.js'
 $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
 $firebase = Get-Content -Raw -LiteralPath $firebasePath | ConvertFrom-Json
 $app = Get-Content -Raw -LiteralPath $appPath
 $html = Get-Content -Raw -LiteralPath $htmlPath
 $worker = Get-Content -Raw -LiteralPath $workerPath
-$login = Get-Content -Raw -LiteralPath $loginPath
 $archiveName = "gemini-sso-launcher-extension-v$($manifest.version).zip"
 $archivePath = Join-Path $projectRoot "public\downloads\$archiveName"
 
@@ -21,25 +19,36 @@ $expectedExtensionId = 'jeenmgigpkffleijbmfciffiodlcdafh'
 
 if ($manifest.manifest_version -ne 3) { throw 'Manifest V3 is required.' }
 if ($manifest.externally_connectable.matches -notcontains $expectedOrigin) { throw 'Hosted origin is not allowlisted.' }
-if ($manifest.permissions -contains 'nativeMessaging') { throw 'nativeMessaging is forbidden in extension-only POC.' }
-if ($manifest.permissions -contains 'downloads') { throw 'downloads permission is unnecessary.' }
-if ($manifest.permissions -notcontains 'scripting') { throw 'scripting permission is required for the explicit Google page automation.' }
+if ($manifest.permissions -contains 'nativeMessaging') { throw 'nativeMessaging is forbidden.' }
+if ($manifest.permissions -contains 'cookies') { throw 'cookies permission is forbidden.' }
+if ($manifest.permissions -notcontains 'scripting') { throw 'scripting is required for non-secret Google page controls.' }
 if ($app -notmatch [regex]::Escape($expectedExtensionId)) { throw 'Hosted app extension ID does not match the fixed manifest key.' }
 if ($app -notmatch [regex]::Escape("REQUIRED_EXTENSION_VERSION = `"$($manifest.version)`"")) { throw 'Hosted app does not require the packaged extension version.' }
+if ($app -notmatch 'PROTOCOL_VERSION = 3') { throw 'Hosted app must use secretless protocol 3.' }
 if ($firebase.hosting.site -ne 'poc-after-sso-login-gemini') { throw 'Wrong Firebase Hosting site.' }
 if (-not ($firebase.hosting.headers | Where-Object { $_.source -eq '/' -and $_.headers.key -contains 'Cache-Control' -and $_.headers.value -contains 'no-cache' })) { throw 'Root HTML route must disable cache.' }
 if (-not ($firebase.hosting.headers | Where-Object { $_.source -eq '**/*.@(js|css)' -and $_.headers.key -contains 'Cache-Control' -and $_.headers.value -contains 'no-cache' })) { throw 'Launcher assets must disable cache.' }
 if ($html -notmatch [regex]::Escape("/app.js?v=$($manifest.version)")) { throw 'Hosted page must cache-bust app.js with the packaged extension version.' }
+if ($html -notmatch [regex]::Escape("/styles.css?v=$($manifest.version)")) { throw 'Hosted page must cache-bust styles.css with the packaged extension version.' }
 if ($html -match '(?i)(https?://)?(localhost|127\.0\.0\.1)(:\d+)?') { throw 'Hosted page references a local runtime endpoint.' }
-if ($worker -match '(?s)storage\.session\.set\s*\([^\)]*password') { throw 'Password must never be written to extension storage.' }
-if ($login -match 'chrome\.storage') { throw 'Credential page must not access extension storage.' }
+if ($worker -match 'PASS_PASSWORD|submitGooglePassword|openCredentialPassThrough|login\.html|credentialChallengeId') { throw 'Credential bridge code is forbidden.' }
+if ($worker -match "input\[type=['`"]password|input\[name=['`"]Passwd") { throw 'Extension must not query credential inputs.' }
+if ($worker -match 'chrome\.cookies|chrome\.identity') { throw 'Cookie and OAuth token shortcuts are forbidden.' }
+
+$retiredCredentialFiles = @('login.html', 'login.js', 'login.css')
+foreach ($name in $retiredCredentialFiles) {
+  if (Test-Path -LiteralPath (Join-Path $projectRoot "extension\$name")) { throw "Retired credential file still exists: $name" }
+}
+
 if (-not (Test-Path -LiteralPath $archivePath)) { throw 'Hosted extension archive is missing.' }
 if ($html -notmatch [regex]::Escape("/downloads/$archiveName")) { throw 'Hosted page does not link the extension archive.' }
+$hostedArchives = @(Get-ChildItem -LiteralPath (Join-Path $projectRoot 'public\downloads') -Filter '*.zip' -File)
+if ($hostedArchives.Count -ne 1 -or $hostedArchives[0].Name -ne $archiveName) { throw 'Only the current secretless extension archive may be hosted.' }
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
 try {
-  $expectedEntries = @('content-script.js', 'login.css', 'login.html', 'login.js', 'manifest.json', 'service-worker.js')
+  $expectedEntries = @('content-script.js', 'manifest.json', 'service-worker.js')
   $actualEntries = @($archive.Entries | ForEach-Object FullName | Sort-Object)
   if (($actualEntries -join '|') -ne (($expectedEntries | Sort-Object) -join '|')) { throw 'Hosted extension archive has unexpected entries.' }
   foreach ($entryName in $expectedEntries) {
@@ -81,5 +90,8 @@ Write-Output 'PASS extension-only-no-native-host'
 Write-Output 'PASS fixed-extension-id'
 Write-Output 'PASS static-firebase-hosting'
 Write-Output 'PASS hosted-extension-archive'
+Write-Output 'PASS no-retired-extension-archives'
 Write-Output 'PASS no-node-project-dependency'
-Write-Output 'PASS credential-pass-through-no-extension-storage'
+Write-Output 'PASS no-credential-page-or-message-path'
+Write-Output 'PASS no-password-input-query'
+Write-Output 'PASS no-cookie-or-oauth-shortcut'
