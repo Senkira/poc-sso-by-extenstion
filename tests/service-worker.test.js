@@ -34,7 +34,7 @@ const chrome = {
   },
   runtime: {
     id: EXTENSION_ID,
-    getManifest() { return { version: "0.4.4" }; },
+    getManifest() { return { version: "0.4.5" }; },
     onMessageExternal: event("external"),
     onMessage: event("internal")
   },
@@ -185,6 +185,21 @@ async function main() {
     "late completion for the automated document must not clobber authentication progress"
   );
 
+  store[`run:${requestId}`].stage = "BROWSER_CREDENTIAL_SUBMIT_REQUESTED";
+  store[`run:${requestId}`].authAttemptAt = Date.now() - 5000;
+  store[`run:${requestId}`].authPendingChecks = 0;
+  store[`run:${requestId}`].nextAuthCheckAt = null;
+  currentFrame = { url: "https://accounts.google.com/v3/signin/challenge/otp", documentId: "doc-password" };
+  scriptStep = "AUTH_PAGE_CHANGED";
+  status = await external({ type: "GET_STATUS", version: 3, requestId });
+  assert.equal(
+    status.run.stage,
+    "AUTH_TRANSITION_OBSERVED",
+    "same-document challenge-path reconciliation must preserve auth state until inspection"
+  );
+
+  currentFrame = { url: "https://accounts.google.com/v3/signin/challenge/pwd", documentId: "doc-password" };
+
   const source = fs.readFileSync("extension/service-worker.js", "utf8");
   assert.doesNotMatch(source, /PASS_PASSWORD|submitGooglePassword|openCredentialPassThrough|login\.html/);
   assert.doesNotMatch(source, /input\[type=['"]password|input\[name=['"]Passwd/);
@@ -245,7 +260,10 @@ async function main() {
     "AUTH_PENDING"
   );
 
+  store[`run:${requestId}`].stage = "BROWSER_CREDENTIAL_SUBMIT_REQUESTED";
   store[`run:${requestId}`].authAttemptAt = Date.now() - 5000;
+  store[`run:${requestId}`].authPendingChecks = 0;
+  store[`run:${requestId}`].nextAuthCheckAt = null;
   scriptStep = "AUTH_PENDING";
   status = await external({ type: "GET_STATUS", version: 3, requestId });
   assert.equal(status.run.stage, "AUTH_PENDING");
@@ -328,6 +346,7 @@ async function main() {
   console.log("PASS missed-navigation-status-reconciliation");
   console.log("PASS per-document-automation-single-flight");
   console.log("PASS late-completion-does-not-clobber-auth-state");
+  console.log("PASS same-document-path-reconciliation-preserves-auth-state");
   console.log("PASS no-extension-credential-page-or-message");
   console.log("PASS strict-password-challenge-account-binding");
   console.log("PASS ambiguous-selected-account-evidence-fails-closed");

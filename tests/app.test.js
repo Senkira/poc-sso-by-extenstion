@@ -33,7 +33,7 @@ const ids = [
   "123e4567-e89b-42d3-a456-426614174002"
 ];
 let uuidIndex = 0;
-let pingVersion = "0.4.4";
+let pingVersion = "0.4.5";
 let pingProtocol = 3;
 let statusMode = "pending-first";
 let pendingOldPoll = null;
@@ -191,12 +191,12 @@ async function main() {
   await elements.get("#retry-button").listeners.click();
   await flush();
   assert.equal(elements.get("#connection-badge").textContent, "Not detected");
-  assert.match(elements.get("#connection-detail").textContent, /v0\.3\.0.*v0\.4\.4.*Reload/);
+  assert.match(elements.get("#connection-detail").textContent, /v0\.3\.0.*v0\.4\.5.*Reload/);
 
   pingProtocol = 2;
   await elements.get("#retry-button").listeners.click();
   await flush();
-  assert.match(elements.get("#connection-detail").textContent, /protocol เก่า.*Reload.*v0\.4\.4/);
+  assert.match(elements.get("#connection-detail").textContent, /protocol เก่า.*Reload.*v0\.4\.5/);
 
   console.log("PASS stale-run-poll-failure-isolation");
   console.log("PASS single-flight-recursive-polling");

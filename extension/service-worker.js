@@ -105,8 +105,7 @@ function applyNavigation(run, details, completed, committed = false) {
   run.observedOrigin = url.origin;
   run.observedPath = url.pathname;
   if (url.origin === "https://accounts.google.com") {
-    const sameAutomatedDocument = completed
-      && (!details.documentId || details.documentId === run.currentDocumentId)
+    const sameAutomatedDocument = (!details.documentId || details.documentId === run.currentDocumentId)
       && run.automatedDocumentId === run.currentDocumentId;
     if (!sameAutomatedDocument) {
       run.stage = completed ? "GOOGLE_ACCOUNTS_PAGE_LOADED" : "GOOGLE_ACCOUNTS_NAVIGATED";

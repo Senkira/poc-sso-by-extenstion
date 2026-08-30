@@ -1,7 +1,7 @@
 "use strict";
 
 const EXTENSION_ID = "jeenmgigpkffleijbmfciffiodlcdafh";
-const REQUIRED_EXTENSION_VERSION = "0.4.4";
+const REQUIRED_EXTENSION_VERSION = "0.4.5";
 const PROTOCOL_VERSION = 3;
 const POLL_INTERVAL_MS = 1000;
 const POLL_TIMEOUT_MS = 2 * 60 * 1000;
