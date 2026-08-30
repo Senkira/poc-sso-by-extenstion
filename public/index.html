@@ -37,7 +37,7 @@
       </section>
 
       <section class="card evidence" aria-labelledby="evidence-title">
-        <h2 id="evidence-title">หลักฐานจาก extension</h2>
+        <h2 id="evidence-title">สถานะที่ extension รายงาน</h2>
         <dl>
           <div><dt>Request</dt><dd id="request-value">—</dd></div>
           <div><dt>Stage</dt><dd id="stage-value">ยังไม่ได้เริ่ม</dd></div>
@@ -45,17 +45,13 @@
           <div><dt>Gemini document</dt><dd id="document-value">—</dd></div>
         </dl>
         <p id="truth-note" class="notice">
-          POC นี้ยืนยันการเชื่อมต่อ extension และ lifecycle ของแท็บที่เปิดจริง
+          ข้อมูลนี้เป็น local telemetry จาก extension สำหรับ lifecycle ของแท็บที่เปิดจริง
           แต่ไม่อ้างว่ายืนยันตัวตนหรือ entitlement ของบัญชี Gemini
         </p>
       </section>
 
       <details class="card">
         <summary>ติดตั้ง extension ครั้งแรกใน Chrome หรือ Edge</summary>
-        <p>
-          หากต้องแยกบัญชีแบบคง session ให้สร้าง browser profile เฉพาะก่อน
-          แล้วติดตั้ง extension และลงชื่อเข้าใช้บัญชีที่อนุมัติใน profile นั้นเพียงครั้งเดียว
-        </p>
         <ol>
           <li><a href="/downloads/gemini-sso-launcher-extension-v0.2.0.zip" download>ดาวน์โหลด extension v0.2.0</a> และแตกไฟล์</li>
           <li>Chrome เปิด <code>chrome://extensions</code> หรือ Edge เปิด <code>edge://extensions</code></li>
@@ -64,9 +60,6 @@
           <li>กลับมาหน้านี้และกด “ตรวจ extension อีกครั้ง”</li>
         </ol>
         <p>Extension ID ที่กำหนดตายตัว: <code id="extension-id"></code></p>
-        <p class="notice">
-          Extension ทำงานใน browser profile ที่ติดตั้งอยู่และไม่สามารถสร้างหรือเลือก profile อื่นแทนผู้ใช้ได้
-        </p>
       </details>
     </main>
     <footer>

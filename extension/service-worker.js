@@ -94,7 +94,7 @@ function applyNavigation(run, details, completed, committed = false) {
   run.lastNavigationAt = navigationAt;
   run.observedOrigin = url.origin;
   if (url.origin === "https://accounts.google.com") {
-    run.stage = completed ? "GOOGLE_SIGN_IN_PAGE_LOADED" : "GOOGLE_SIGN_IN_REQUIRED";
+    run.stage = completed ? "GOOGLE_ACCOUNTS_PAGE_LOADED" : "GOOGLE_ACCOUNTS_NAVIGATED";
   } else if (url.origin === "https://gemini.google.com") {
     run.stage = run.documentObserved
       ? "GEMINI_DOCUMENT_OBSERVED"
@@ -291,6 +291,7 @@ chrome.webNavigation.onErrorOccurred.addListener((details) => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type !== "GEMINI_DOCUMENT_SIGNAL"
+      || message.version !== PROTOCOL_VERSION
       || sender.frameId !== 0
       || !Number.isInteger(sender.tab?.id)) {
     return false;
@@ -325,19 +326,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
     if (frameOrigin !== "https://gemini.google.com"
-        || (sender.documentId && frame.documentId && sender.documentId !== frame.documentId)) {
+        || !sender.documentId
+        || !frame.documentId
+        || sender.documentId !== frame.documentId) {
       sendResponse({ ok: false });
       return;
     }
 
     const run = await updateRun(requestId, (current) => {
       if (current.closed
-          || (current.currentDocumentId && frame.documentId
-            && current.currentDocumentId !== frame.documentId)) {
+          || current.tabId !== sender.tab.id
+          || current.currentDocumentId !== frame.documentId) {
         return false;
-      }
-      if (frame.documentId) {
-        current.currentDocumentId = frame.documentId;
       }
       current.stage = "GEMINI_DOCUMENT_OBSERVED";
       current.observedOrigin = "https://gemini.google.com";

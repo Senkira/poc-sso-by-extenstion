@@ -97,7 +97,7 @@ async function main() {
   assert.equal(preMappingNavigationEmitted, true);
 
   const reconciled = await external({ type: "GET_STATUS", version: 1, requestId });
-  assert.equal(reconciled.run.stage, "GOOGLE_SIGN_IN_REQUIRED");
+  assert.equal(reconciled.run.stage, "GOOGLE_ACCOUNTS_NAVIGATED");
   assert.equal(reconciled.run.observedOrigin, "https://accounts.google.com");
 
   currentFrame = {
@@ -113,7 +113,7 @@ async function main() {
   });
   await new Promise((resolve) => setTimeout(resolve, 0));
   await internal(
-    { type: "GEMINI_DOCUMENT_SIGNAL" },
+    { type: "GEMINI_DOCUMENT_SIGNAL", version: 1 },
     {
       frameId: 0,
       url: currentFrame.url,
@@ -139,7 +139,7 @@ async function main() {
   });
   await new Promise((resolve) => setTimeout(resolve, 0));
   const staleSignal = await internal(
-    { type: "GEMINI_DOCUMENT_SIGNAL" },
+    { type: "GEMINI_DOCUMENT_SIGNAL", version: 1 },
     {
       frameId: 0,
       url: "https://gemini.google.com/app",
@@ -151,6 +151,20 @@ async function main() {
   const afterStaleSignal = await external({ type: "GET_STATUS", version: 1, requestId });
   assert.equal(afterStaleSignal.run.stage, "GEMINI_NAVIGATED");
   assert.equal(afterStaleSignal.run.documentObserved, false);
+
+  let wrongVersionResponded = false;
+  const wrongVersionResult = listeners.internal(
+    { type: "GEMINI_DOCUMENT_SIGNAL", version: 2 },
+    {
+      frameId: 0,
+      url: currentFrame.url,
+      documentId: currentFrame.documentId,
+      tab: { id: 60 }
+    },
+    () => { wrongVersionResponded = true; }
+  );
+  assert.equal(wrongVersionResult, false);
+  assert.equal(wrongVersionResponded, false);
 
   listeners.tabRemoved(60);
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -167,6 +181,7 @@ async function main() {
   console.log("PASS monotonic-document-state");
   console.log("PASS mapping-reconciliation");
   console.log("PASS stale-document-signal-rejection");
+  console.log("PASS internal-protocol-version-rejection");
   console.log("PASS exact-tab-close-state");
   console.log("PASS untrusted-origin-rejection");
 }

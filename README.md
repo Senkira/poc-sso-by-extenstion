@@ -37,18 +37,13 @@ POC **ไม่อ้าง** ว่าพิสูจน์ Google identity, Ge
 
 หลังติดตั้งแล้วให้ใช้งานจาก <https://poc-after-sso-login-gemini.web.app/> เท่านั้น Origin อื่นไม่สามารถส่งคำสั่งเข้า extension ได้
 
-### Account isolation
-
-หากต้องแยกบัญชีและให้ session คงอยู่ ให้สร้าง Chrome/Edge profile เฉพาะ ติดตั้ง extension ชุดเดิมใน profile นั้นหนึ่งครั้ง และลงชื่อเข้าใช้บัญชีที่อนุมัติหนึ่งครั้ง หลังจากนั้นต้องเปิด hosted launcher จาก profile เดิมเสมอ
-
-Extension API ไม่สามารถสร้างหรือเลือก browser profile อื่นแทนผู้ใช้ได้ ส่วน InPrivate/Incognito แยก cookie ได้แต่ล้าง session เมื่อปิดหน้าต่างทั้งหมด จึงไม่เหมาะกับกรณีที่ต้องการ login ครั้งเดียวแล้วใช้ซ้ำ
-
 ## Verify
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 node .\tests\service-worker.test.js
 node .\tests\content-script.test.js
+node .\tests\app.test.js
 ```
 
 สคริปต์เหล่านี้ใช้เฉพาะตอนพัฒนา ไม่อยู่ใน runtime flow ของผู้ใช้
@@ -72,8 +67,8 @@ npx --yes firebase-tools deploy --only hosting --project poc-after-sso-login-gem
 1. เปิด hosted URL ใน Chrome/Edge profile ที่ติดตั้ง extension
 2. สถานะต้องเปลี่ยนเป็น `Connected`
 3. กด **เข้าสู่ระบบ Gemini** และยืนยันว่าเกิด browser window ใหม่ที่ Google Account Chooser
-4. หน้า hosted ต้องแสดง request UUID และ `WINDOW_CREATED`
-5. ถ้าต้อง login หน้า status ต้องรายงาน `GOOGLE_SIGN_IN_REQUIRED`/`GOOGLE_SIGN_IN_PAGE_LOADED`
+4. หน้า hosted ต้องแสดง request UUID และ local lifecycle telemetry เช่น `WINDOW_CREATED`
+5. ระหว่างเลือกบัญชีหรือลงชื่อเข้าใช้ หน้า status ต้องรายงาน `GOOGLE_ACCOUNTS_NAVIGATED`/`GOOGLE_ACCOUNTS_PAGE_LOADED`
 6. หลังถึง Gemini ต้องรายงาน `GEMINI_DOCUMENT_OBSERVED`
 7. ปิด tab/window แล้ว status ต้องเป็น `TAB_CLOSED`
 8. หาก reload/update extension ระหว่าง run หน้าเว็บต้องรายงาน `RUN_NOT_FOUND` ไม่ค้างหรือแสดง success เก่า

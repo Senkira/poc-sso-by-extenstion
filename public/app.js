@@ -17,9 +17,8 @@ const elements = {
   extensionId: document.querySelector("#extension-id")
 };
 
-let activeRequestId = null;
-let pollTimer = null;
-let pollStartedAt = 0;
+let activeRun = null;
+let generation = 0;
 
 elements.extensionId.textContent = EXTENSION_ID;
 
@@ -74,15 +73,24 @@ async function checkExtension() {
   }
 }
 
-async function pollStatus() {
-  if (!activeRequestId) {
+function isActive(run) {
+  return activeRun === run;
+}
+
+function stopPolling(run) {
+  if (run && run.timerId !== null) {
+    clearInterval(run.timerId);
+    run.timerId = null;
+  }
+}
+
+async function pollStatus(run) {
+  if (!run || !isActive(run)) {
     return;
   }
-  const requestId = activeRequestId;
 
-  if (Date.now() - pollStartedAt > POLL_TIMEOUT_MS) {
-    clearInterval(pollTimer);
-    pollTimer = null;
+  if (Date.now() - run.startedAt > POLL_TIMEOUT_MS) {
+    stopPolling(run);
     elements.stageValue.textContent = "STATUS_TIMEOUT";
     return;
   }
@@ -91,37 +99,40 @@ async function pollStatus() {
     const response = await sendToExtension({
       type: "GET_STATUS",
       version: PROTOCOL_VERSION,
-      requestId
+      requestId: run.requestId
     });
-    if (requestId !== activeRequestId) {
+    if (!isActive(run)) {
       return;
     }
     if (response?.ok) {
       renderRun(response.run);
       if (response.run.closed || response.run.stage === "OPEN_FAILED") {
-        clearInterval(pollTimer);
-        pollTimer = null;
+        stopPolling(run);
       }
     } else {
-      clearInterval(pollTimer);
-      pollTimer = null;
+      stopPolling(run);
       elements.stageValue.textContent = response?.error || "STATUS_UNAVAILABLE";
     }
   } catch {
-    clearInterval(pollTimer);
-    pollTimer = null;
+    if (!isActive(run)) {
+      return;
+    }
+    stopPolling(run);
     setConnection(false, "การเชื่อมต่อ extension หยุดทำงานระหว่างตรวจสถานะ");
   }
 }
 
 async function launchGemini() {
-  clearInterval(pollTimer);
-  pollTimer = null;
-  activeRequestId = crypto.randomUUID();
-  const requestId = activeRequestId;
-  pollStartedAt = Date.now();
+  stopPolling(activeRun);
+  const run = {
+    requestId: crypto.randomUUID(),
+    generation: ++generation,
+    timerId: null,
+    startedAt: Date.now()
+  };
+  activeRun = run;
   elements.launchButton.disabled = true;
-  elements.requestValue.textContent = activeRequestId;
+  elements.requestValue.textContent = run.requestId;
   elements.stageValue.textContent = "REQUESTING_EXTENSION";
   elements.originValue.textContent = "—";
   elements.documentValue.textContent = "—";
@@ -130,22 +141,27 @@ async function launchGemini() {
     const response = await sendToExtension({
       type: "OPEN_GEMINI",
       version: PROTOCOL_VERSION,
-      requestId
+      requestId: run.requestId
     });
-    if (requestId !== activeRequestId) {
+    if (!isActive(run)) {
       return;
     }
     if (!response?.ok) {
       throw new Error(response?.error || "OPEN_FAILED");
     }
     renderRun(response.run);
-    clearInterval(pollTimer);
-    pollTimer = setInterval(pollStatus, POLL_INTERVAL_MS);
-    await pollStatus();
+    stopPolling(run);
+    run.timerId = setInterval(() => pollStatus(run), POLL_INTERVAL_MS);
+    await pollStatus(run);
   } catch (error) {
+    if (!isActive(run)) {
+      return;
+    }
     elements.stageValue.textContent = error instanceof Error ? error.message : "OPEN_FAILED";
   } finally {
-    elements.launchButton.disabled = false;
+    if (isActive(run)) {
+      elements.launchButton.disabled = false;
+    }
   }
 }
 
