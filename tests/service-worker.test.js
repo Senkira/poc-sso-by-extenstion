@@ -10,6 +10,9 @@ const listeners = {};
 const createdOptions = [];
 let scriptStep = "ACCOUNT_SELECTED";
 let currentFrame = { url: "about:blank", documentId: "doc-blank" };
+let performGoogleStepCallCount = 0;
+let scriptGate = null;
+let scriptStarted = null;
 const event = (name) => ({ addListener(listener) { listeners[name] = listener; } });
 
 const chrome = {
@@ -31,7 +34,7 @@ const chrome = {
   },
   runtime: {
     id: EXTENSION_ID,
-    getManifest() { return { version: "0.4.2" }; },
+    getManifest() { return { version: "0.4.3" }; },
     onMessageExternal: event("external"),
     onMessage: event("internal")
   },
@@ -46,6 +49,9 @@ const chrome = {
       assert.deepEqual(Array.from(options.target.documentIds || []), [currentFrame.documentId]);
       assert.deepEqual(Array.from(options.args), ["codeassist.04@easybuy.co.th"]);
       if (options.func.name === "performGoogleStep") {
+        performGoogleStepCallCount += 1;
+        scriptStarted?.();
+        if (scriptGate) await scriptGate;
         return [{ result: { step: scriptStep } }];
       }
       if (options.func.name === "inspectPendingBrowserAuthentication") {
@@ -101,6 +107,12 @@ function internal(message, sender) {
   return new Promise((resolve) => listeners.internal(message, sender, resolve));
 }
 
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
 async function flush(rounds = 3) {
   for (let index = 0; index < rounds; index += 1) {
     await new Promise((resolve) => setImmediate(resolve));
@@ -130,10 +142,43 @@ async function main() {
 
   currentFrame = { url: "https://accounts.google.com/v3/signin/challenge/pwd", documentId: "doc-password" };
   scriptStep = "BROWSER_CREDENTIAL_SUBMIT_REQUESTED";
-  status = await external({ type: "GET_STATUS", version: 3, requestId });
+  performGoogleStepCallCount = 0;
+  const started = deferred();
+  const gate = deferred();
+  scriptStarted = started.resolve;
+  scriptGate = gate.promise;
+  const recoveredStatus = external({ type: "GET_STATUS", version: 3, requestId });
+  await started.promise;
+  listeners.completed({
+    frameId: 0,
+    tabId: 61,
+    url: currentFrame.url,
+    timeStamp: Date.now() + 2,
+    documentId: currentFrame.documentId
+  });
+  await flush();
+  gate.resolve();
+  status = await recoveredStatus;
+  scriptGate = null;
+  scriptStarted = null;
   assert.equal(status.run.stage, "BROWSER_CREDENTIAL_SUBMIT_REQUESTED");
   assert.equal(status.run.documentObserved, false, "GET_STATUS must reconcile a missed navigation event");
+  assert.equal(performGoogleStepCallCount, 1, "event and status recovery must share one automation operation");
   assert.equal(createdOptions.length, 1, "extension must never open a credential page");
+
+  listeners.completed({
+    frameId: 0,
+    tabId: 61,
+    url: currentFrame.url,
+    timeStamp: Date.now() + 3
+  });
+  await flush();
+  status = await external({ type: "GET_STATUS", version: 3, requestId });
+  assert.equal(
+    status.run.stage,
+    "BROWSER_CREDENTIAL_SUBMIT_REQUESTED",
+    "late completion for the automated document must not clobber authentication progress"
+  );
 
   const source = fs.readFileSync("extension/service-worker.js", "utf8");
   assert.doesNotMatch(source, /PASS_PASSWORD|submitGooglePassword|openCredentialPassThrough|login\.html/);
@@ -259,6 +304,8 @@ async function main() {
   console.log("PASS concurrent-window-idempotency");
   console.log("PASS exact-document-non-secret-automation");
   console.log("PASS missed-navigation-status-reconciliation");
+  console.log("PASS per-document-automation-single-flight");
+  console.log("PASS late-completion-does-not-clobber-auth-state");
   console.log("PASS no-extension-credential-page-or-message");
   console.log("PASS strict-password-challenge-account-binding");
   console.log("PASS processing-state-bounded-reconciliation");

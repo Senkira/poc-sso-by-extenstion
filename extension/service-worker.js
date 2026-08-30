@@ -12,6 +12,7 @@ const AUTH_PENDING_RECHECK_MS = 4000;
 const AUTH_PENDING_RECHECK_LIMIT = 2;
 const runUpdates = new Map();
 const openOperations = new Map();
+const automationOperations = new Map();
 
 function runKey(requestId) {
   return `run:${requestId}`;
@@ -104,7 +105,12 @@ function applyNavigation(run, details, completed, committed = false) {
   run.observedOrigin = url.origin;
   run.observedPath = url.pathname;
   if (url.origin === "https://accounts.google.com") {
-    run.stage = completed ? "GOOGLE_ACCOUNTS_PAGE_LOADED" : "GOOGLE_ACCOUNTS_NAVIGATED";
+    const sameAutomatedDocument = completed
+      && (!details.documentId || details.documentId === run.currentDocumentId)
+      && run.automatedDocumentId === run.currentDocumentId;
+    if (!sameAutomatedDocument) {
+      run.stage = completed ? "GOOGLE_ACCOUNTS_PAGE_LOADED" : "GOOGLE_ACCOUNTS_NAVIGATED";
+    }
   } else if (url.origin === "https://gemini.google.com") {
     run.stage = run.targetAccountConfirmed
       ? "GEMINI_TARGET_ACCOUNT_CONFIRMED"
@@ -435,18 +441,11 @@ async function getStatus(message) {
   return { ok: true, run: publicRun(run) };
 }
 
-async function automateGoogleLogin(requestId, tabId, attempt = 0) {
+async function automateGoogleDocument(requestId, tabId, documentId, attempt = 0) {
   const run = await getRun(requestId);
-  if (!run || run.closed || run.tabId !== tabId || run.automatedDocumentId === run.currentDocumentId) {
-    return;
-  }
-  const documentId = run.currentDocumentId || null;
-  if (!documentId) {
-    await updateRun(requestId, (current) => {
-      current.stage = "AUTOMATION_ERROR";
-      current.note = "The exact Google document could not be identified.";
-      current.automatedDocumentId = null;
-    });
+  if (!run || run.closed || run.tabId !== tabId
+      || run.currentDocumentId !== documentId
+      || run.automatedDocumentId === documentId) {
     return;
   }
   if (attempt === 0 && /\/challenge\/pwd(?:\/|$)/.test(run.observedPath || "")) {
@@ -478,7 +477,7 @@ async function automateGoogleLogin(requestId, tabId, attempt = 0) {
   }
   if (outcome === "WAITING_FOR_SUPPORTED_FORM" && attempt < AUTOMATION_RETRY_LIMIT) {
     await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)));
-    return automateGoogleLogin(requestId, tabId, attempt + 1);
+    return automateGoogleDocument(requestId, tabId, documentId, attempt + 1);
   }
   const stage = outcome === "WAITING_FOR_SUPPORTED_FORM" ? "GOOGLE_PAGE_UNRECOGNIZED" : outcome;
   await updateRun(requestId, (current) => {
@@ -500,6 +499,36 @@ async function automateGoogleLogin(requestId, tabId, attempt = 0) {
       current.note = null;
     }
   });
+}
+
+async function automateGoogleLogin(requestId, tabId) {
+  const run = await getRun(requestId);
+  if (!run || run.closed || run.tabId !== tabId || run.automatedDocumentId === run.currentDocumentId) {
+    return;
+  }
+  const documentId = run.currentDocumentId || null;
+  if (!documentId) {
+    await updateRun(requestId, (current) => {
+      current.stage = "AUTOMATION_ERROR";
+      current.note = "The exact Google document could not be identified.";
+      current.automatedDocumentId = null;
+    });
+    return;
+  }
+  const operationKey = `${requestId}:${documentId}`;
+  const pending = automationOperations.get(operationKey);
+  if (pending) {
+    return pending;
+  }
+  const operation = automateGoogleDocument(requestId, tabId, documentId);
+  automationOperations.set(operationKey, operation);
+  try {
+    return await operation;
+  } finally {
+    if (automationOperations.get(operationKey) === operation) {
+      automationOperations.delete(operationKey);
+    }
+  }
 }
 
 chrome.storage.session.setAccessLevel?.({ accessLevel: "TRUSTED_CONTEXTS" }).catch(() => {});
