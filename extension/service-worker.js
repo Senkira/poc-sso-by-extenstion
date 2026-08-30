@@ -68,6 +68,57 @@ async function updateRun(requestId, mutate) {
   }
 }
 
+function applyNavigation(run, details, completed, committed = false) {
+  let url;
+  try {
+    url = new URL(details.url);
+  } catch {
+    return false;
+  }
+
+  const navigationAt = Number.isFinite(details.timeStamp) ? details.timeStamp : Date.now();
+  if (run.closed || navigationAt < (run.lastNavigationAt || 0)) {
+    return false;
+  }
+
+  if (!committed && details.documentId && run.currentDocumentId
+      && details.documentId !== run.currentDocumentId) {
+    return false;
+  }
+
+  if (committed && details.documentId && details.documentId !== run.currentDocumentId) {
+    run.currentDocumentId = details.documentId;
+    run.documentObserved = false;
+  }
+
+  run.lastNavigationAt = navigationAt;
+  run.observedOrigin = url.origin;
+  if (url.origin === "https://accounts.google.com") {
+    run.stage = completed ? "GOOGLE_SIGN_IN_PAGE_LOADED" : "GOOGLE_SIGN_IN_REQUIRED";
+  } else if (url.origin === "https://gemini.google.com") {
+    run.stage = run.documentObserved
+      ? "GEMINI_DOCUMENT_OBSERVED"
+      : completed
+        ? "GEMINI_DOCUMENT_LOADED"
+        : "GEMINI_NAVIGATED";
+  } else {
+    run.stage = completed ? "OTHER_PAGE_LOADED" : "OTHER_PAGE_NAVIGATED";
+  }
+  return true;
+}
+
+async function reconcileCurrentFrame(requestId, tabId) {
+  const frame = await chrome.webNavigation.getFrame({ tabId, frameId: 0 });
+  if (!frame?.url) {
+    return;
+  }
+  await updateRun(requestId, (run) => applyNavigation(run, {
+    url: frame.url,
+    documentId: frame.documentId,
+    timeStamp: Date.now()
+  }, false, true));
+}
+
 function publicRun(run) {
   if (!run) {
     return null;
@@ -112,7 +163,7 @@ async function openGeminiOnce(message) {
     const tab = createdWindow.tabs?.[0];
 
     if (!tab || !Number.isInteger(tab.id)) {
-      throw new Error("Edge did not return the created tab.");
+      throw new Error("Browser did not return the created tab.");
     }
 
     await chrome.storage.session.set({ [tabKey(tab.id)]: message.requestId });
@@ -123,7 +174,9 @@ async function openGeminiOnce(message) {
         current.stage = "WINDOW_CREATED";
       }
     });
-    return { ok: true, run: publicRun(savedRun), replayed: false };
+    await reconcileCurrentFrame(message.requestId, tab.id).catch(() => {});
+    const reconciledRun = await getRun(message.requestId);
+    return { ok: true, run: publicRun(reconciledRun || savedRun), replayed: false };
   } catch (error) {
     run.stage = "OPEN_FAILED";
     run.note = error instanceof Error ? error.message : "Unknown launch error";
@@ -202,33 +255,7 @@ async function updateNavigation(details, completed) {
     return;
   }
 
-  let url;
-  try {
-    url = new URL(details.url);
-  } catch {
-    return;
-  }
-
-  const navigationAt = Number.isFinite(details.timeStamp) ? details.timeStamp : Date.now();
-  await updateRun(requestId, (run) => {
-    if (run.closed || navigationAt < (run.lastNavigationAt || 0)) {
-      return false;
-    }
-
-    run.lastNavigationAt = navigationAt;
-    run.observedOrigin = url.origin;
-    if (url.origin === "https://accounts.google.com") {
-      run.stage = completed ? "GOOGLE_SIGN_IN_PAGE_LOADED" : "GOOGLE_SIGN_IN_REQUIRED";
-    } else if (url.origin === "https://gemini.google.com") {
-      run.stage = run.documentObserved
-        ? "GEMINI_DOCUMENT_OBSERVED"
-        : completed
-          ? "GEMINI_DOCUMENT_LOADED"
-          : "GEMINI_NAVIGATED";
-    } else {
-      run.stage = completed ? "OTHER_PAGE_LOADED" : "OTHER_PAGE_NAVIGATED";
-    }
-  });
+  await updateRun(requestId, (run) => applyNavigation(run, details, completed, !completed));
 }
 
 chrome.webNavigation.onCommitted.addListener((details) => {
@@ -263,11 +290,25 @@ chrome.webNavigation.onErrorOccurred.addListener((details) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type !== "GEMINI_DOCUMENT_SIGNAL" || !Number.isInteger(sender.tab?.id)) {
+  if (message?.type !== "GEMINI_DOCUMENT_SIGNAL"
+      || sender.frameId !== 0
+      || !Number.isInteger(sender.tab?.id)) {
     return false;
   }
 
   (async () => {
+    let senderOrigin;
+    try {
+      senderOrigin = new URL(sender.url).origin;
+    } catch {
+      sendResponse({ ok: false });
+      return;
+    }
+    if (senderOrigin !== "https://gemini.google.com") {
+      sendResponse({ ok: false });
+      return;
+    }
+
     const mapping = await chrome.storage.session.get(tabKey(sender.tab.id));
     const requestId = mapping[tabKey(sender.tab.id)];
     if (!requestId) {
@@ -275,9 +316,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
+    const frame = await chrome.webNavigation.getFrame({ tabId: sender.tab.id, frameId: 0 });
+    let frameOrigin;
+    try {
+      frameOrigin = new URL(frame?.url).origin;
+    } catch {
+      sendResponse({ ok: false });
+      return;
+    }
+    if (frameOrigin !== "https://gemini.google.com"
+        || (sender.documentId && frame.documentId && sender.documentId !== frame.documentId)) {
+      sendResponse({ ok: false });
+      return;
+    }
+
     const run = await updateRun(requestId, (current) => {
-      if (current.closed) {
+      if (current.closed
+          || (current.currentDocumentId && frame.documentId
+            && current.currentDocumentId !== frame.documentId)) {
         return false;
+      }
+      if (frame.documentId) {
+        current.currentDocumentId = frame.documentId;
       }
       current.stage = "GEMINI_DOCUMENT_OBSERVED";
       current.observedOrigin = "https://gemini.google.com";

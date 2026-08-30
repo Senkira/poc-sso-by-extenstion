@@ -29,7 +29,7 @@ POC **ไม่อ้าง** ว่าพิสูจน์ Google identity, Ge
 
 ## Install once in Chrome or Edge
 
-1. ดาวน์โหลด ZIP จาก <https://poc-after-sso-login-gemini.web.app/downloads/gemini-sso-launcher-extension-v0.1.0.zip> และแตกไฟล์
+1. ดาวน์โหลด ZIP จาก <https://poc-after-sso-login-gemini.web.app/downloads/gemini-sso-launcher-extension-v0.1.1.zip> และแตกไฟล์
 2. Chrome เปิด `chrome://extensions` หรือ Edge เปิด `edge://extensions`
 3. เปิด Developer mode
 4. เลือก **Load unpacked** แล้วเลือกโฟลเดอร์ที่แตกไฟล์
@@ -37,11 +37,18 @@ POC **ไม่อ้าง** ว่าพิสูจน์ Google identity, Ge
 
 หลังติดตั้งแล้วให้ใช้งานจาก <https://poc-after-sso-login-gemini.web.app/> เท่านั้น Origin อื่นไม่สามารถส่งคำสั่งเข้า extension ได้
 
+### Account isolation
+
+หากต้องแยกบัญชีและให้ session คงอยู่ ให้สร้าง Chrome/Edge profile เฉพาะ ติดตั้ง extension ชุดเดิมใน profile นั้นหนึ่งครั้ง และลงชื่อเข้าใช้บัญชีที่อนุมัติหนึ่งครั้ง หลังจากนั้นต้องเปิด hosted launcher จาก profile เดิมเสมอ
+
+Extension API ไม่สามารถสร้างหรือเลือก browser profile อื่นแทนผู้ใช้ได้ ส่วน InPrivate/Incognito แยก cookie ได้แต่ล้าง session เมื่อปิดหน้าต่างทั้งหมด จึงไม่เหมาะกับกรณีที่ต้องการ login ครั้งเดียวแล้วใช้ซ้ำ
+
 ## Verify
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 node .\tests\service-worker.test.js
+node .\tests\content-script.test.js
 ```
 
 สคริปต์เหล่านี้ใช้เฉพาะตอนพัฒนา ไม่อยู่ใน runtime flow ของผู้ใช้

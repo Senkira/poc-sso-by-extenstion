@@ -5,12 +5,12 @@ $manifestPath = Join-Path $projectRoot 'extension\manifest.json'
 $firebasePath = Join-Path $projectRoot 'firebase.json'
 $appPath = Join-Path $projectRoot 'public\app.js'
 $htmlPath = Join-Path $projectRoot 'public\index.html'
-$archivePath = Join-Path $projectRoot 'public\downloads\gemini-sso-launcher-extension-v0.1.0.zip'
-
 $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
 $firebase = Get-Content -Raw -LiteralPath $firebasePath | ConvertFrom-Json
 $app = Get-Content -Raw -LiteralPath $appPath
 $html = Get-Content -Raw -LiteralPath $htmlPath
+$archiveName = "gemini-sso-launcher-extension-v$($manifest.version).zip"
+$archivePath = Join-Path $projectRoot "public\downloads\$archiveName"
 
 $expectedOrigin = 'https://poc-after-sso-login-gemini.web.app/*'
 $expectedExtensionId = 'jeenmgigpkffleijbmfciffiodlcdafh'
@@ -23,7 +23,7 @@ if ($app -notmatch [regex]::Escape($expectedExtensionId)) { throw 'Hosted app ex
 if ($firebase.hosting.site -ne 'poc-after-sso-login-gemini') { throw 'Wrong Firebase Hosting site.' }
 if ($html -match '(?i)(https?://)?(localhost|127\.0\.0\.1)(:\d+)?') { throw 'Hosted page references a local runtime endpoint.' }
 if (-not (Test-Path -LiteralPath $archivePath)) { throw 'Hosted extension archive is missing.' }
-if ($html -notmatch '/downloads/gemini-sso-launcher-extension-v0\.1\.0\.zip') { throw 'Hosted page does not link the extension archive.' }
+if ($html -notmatch [regex]::Escape("/downloads/$archiveName")) { throw 'Hosted page does not link the extension archive.' }
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [System.IO.Compression.ZipFile]::OpenRead($archivePath)

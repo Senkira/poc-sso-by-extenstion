@@ -7,6 +7,11 @@ const assert = require("assert/strict");
 const store = {};
 const listeners = {};
 let createCount = 0;
+let preMappingNavigationEmitted = false;
+let currentFrame = {
+  url: "https://gemini.google.com/app",
+  documentId: "doc-initial"
+};
 const event = (name) => ({ addListener(listener) { listeners[name] = listener; } });
 
 const chrome = {
@@ -26,18 +31,29 @@ const chrome = {
   windows: {
     async create() {
       createCount += 1;
+      listeners.committed({
+        frameId: 0,
+        tabId: 60,
+        url: currentFrame.url,
+        timeStamp: Date.now(),
+        documentId: currentFrame.documentId
+      });
+      preMappingNavigationEmitted = true;
       await new Promise((resolve) => setTimeout(resolve, 5));
       return { id: 50, tabs: [{ id: 60 }] };
     }
   },
   runtime: {
     getManifest() {
-      return { version: "0.1.0" };
+      return { version: "0.1.1" };
     },
     onMessageExternal: event("external"),
     onMessage: event("internal")
   },
   webNavigation: {
+    async getFrame() {
+      return { ...currentFrame };
+    },
     onCommitted: event("committed"),
     onCompleted: event("completed"),
     onErrorOccurred: event("navigationError")
@@ -59,7 +75,12 @@ function external(message, sender = {
   return new Promise((resolve) => listeners.external(message, sender, resolve));
 }
 
-function internal(message, sender = { tab: { id: 60 } }) {
+function internal(message, sender = {
+  frameId: 0,
+  url: "https://gemini.google.com/app",
+  documentId: "doc-initial",
+  tab: { id: 60 }
+}) {
   return new Promise((resolve) => listeners.internal(message, sender, resolve));
 }
 
@@ -73,19 +94,51 @@ async function main() {
   assert.equal(first.ok, true);
   assert.equal(replay.ok, true);
   assert.equal(createCount, 1, "same UUID must create exactly one window");
+  assert.equal(preMappingNavigationEmitted, true);
+
+  const reconciled = await external({ type: "GET_STATUS", version: 1, requestId });
+  assert.equal(reconciled.run.stage, "GEMINI_NAVIGATED");
+  assert.equal(reconciled.run.observedOrigin, "https://gemini.google.com");
 
   await internal({ type: "GEMINI_DOCUMENT_SIGNAL" });
   listeners.completed({
     frameId: 0,
     tabId: 60,
     url: "https://gemini.google.com/app",
-    timeStamp: 20
+    timeStamp: Date.now() + 1,
+    documentId: "doc-initial"
   });
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   const observed = await external({ type: "GET_STATUS", version: 1, requestId });
   assert.equal(observed.run.stage, "GEMINI_DOCUMENT_OBSERVED");
   assert.equal(observed.run.documentObserved, true);
+
+  currentFrame = {
+    url: "https://gemini.google.com/app/new",
+    documentId: "doc-new"
+  };
+  listeners.committed({
+    frameId: 0,
+    tabId: 60,
+    url: currentFrame.url,
+    timeStamp: Date.now() + 2,
+    documentId: currentFrame.documentId
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const staleSignal = await internal(
+    { type: "GEMINI_DOCUMENT_SIGNAL" },
+    {
+      frameId: 0,
+      url: "https://gemini.google.com/app",
+      documentId: "doc-initial",
+      tab: { id: 60 }
+    }
+  );
+  assert.equal(staleSignal.ok, false);
+  const afterStaleSignal = await external({ type: "GET_STATUS", version: 1, requestId });
+  assert.equal(afterStaleSignal.run.stage, "GEMINI_NAVIGATED");
+  assert.equal(afterStaleSignal.run.documentObserved, false);
 
   listeners.tabRemoved(60);
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -100,6 +153,8 @@ async function main() {
 
   console.log("PASS concurrent-idempotency");
   console.log("PASS monotonic-document-state");
+  console.log("PASS mapping-reconciliation");
+  console.log("PASS stale-document-signal-rejection");
   console.log("PASS exact-tab-close-state");
   console.log("PASS untrusted-origin-rejection");
 }
@@ -108,4 +163,3 @@ main().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });
-
