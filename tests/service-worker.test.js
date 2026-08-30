@@ -34,7 +34,7 @@ const chrome = {
   },
   runtime: {
     id: EXTENSION_ID,
-    getManifest() { return { version: "0.4.5" }; },
+    getManifest() { return { version: "0.4.6" }; },
     onMessageExternal: event("external"),
     onMessage: event("internal")
   },
@@ -145,7 +145,7 @@ async function main() {
   let status = await external({ type: "GET_STATUS", version: 3, requestId });
   assert.equal(status.run.stage, "ACCOUNT_SELECTED");
 
-  currentFrame = { url: "https://accounts.google.com/v3/signin/challenge/pwd", documentId: "doc-password" };
+  currentFrame = { url: "https://accounts.google.com/v3/signin/challenge/pwd", documentId: "doc-account-chooser" };
   scriptStep = "BROWSER_CREDENTIAL_SUBMIT_REQUESTED";
   performGoogleStepCallCount = 0;
   const started = deferred();
@@ -189,7 +189,7 @@ async function main() {
   store[`run:${requestId}`].authAttemptAt = Date.now() - 5000;
   store[`run:${requestId}`].authPendingChecks = 0;
   store[`run:${requestId}`].nextAuthCheckAt = null;
-  currentFrame = { url: "https://accounts.google.com/v3/signin/challenge/otp", documentId: "doc-password" };
+  currentFrame = { url: "https://accounts.google.com/v3/signin/challenge/otp", documentId: "doc-account-chooser" };
   scriptStep = "AUTH_PAGE_CHANGED";
   status = await external({ type: "GET_STATUS", version: 3, requestId });
   assert.equal(
@@ -198,7 +198,7 @@ async function main() {
     "same-document challenge-path reconciliation must preserve auth state until inspection"
   );
 
-  currentFrame = { url: "https://accounts.google.com/v3/signin/challenge/pwd", documentId: "doc-password" };
+  currentFrame = { url: "https://accounts.google.com/v3/signin/challenge/pwd", documentId: "doc-account-chooser" };
 
   const source = fs.readFileSync("extension/service-worker.js", "utf8");
   assert.doesNotMatch(source, /PASS_PASSWORD|submitGooglePassword|openCredentialPassThrough|login\.html/);
@@ -347,6 +347,7 @@ async function main() {
   console.log("PASS per-document-automation-single-flight");
   console.log("PASS late-completion-does-not-clobber-auth-state");
   console.log("PASS same-document-path-reconciliation-preserves-auth-state");
+  console.log("PASS same-document-new-google-step-is-automated-once");
   console.log("PASS no-extension-credential-page-or-message");
   console.log("PASS strict-password-challenge-account-binding");
   console.log("PASS ambiguous-selected-account-evidence-fails-closed");

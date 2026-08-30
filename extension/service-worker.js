@@ -10,6 +10,10 @@ const PASSWORD_MANAGER_SETTLE_MS = 750;
 const BROWSER_AUTH_SETTLE_MS = 4000;
 const AUTH_PENDING_RECHECK_MS = 4000;
 const AUTH_PENDING_RECHECK_LIMIT = 2;
+const PENDING_BROWSER_AUTH_STAGES = new Set([
+  "BROWSER_CREDENTIAL_SUBMIT_REQUESTED",
+  "AUTH_PENDING"
+]);
 const runUpdates = new Map();
 const openOperations = new Map();
 const automationOperations = new Map();
@@ -97,6 +101,7 @@ function applyNavigation(run, details, completed, committed = false) {
     run.targetAccountConfirmed = false;
     run.identityCheckComplete = false;
     run.automatedDocumentId = null;
+    run.automatedDocumentPath = null;
     run.authAttemptAt = null;
     run.authPendingChecks = 0;
     run.nextAuthCheckAt = null;
@@ -105,9 +110,14 @@ function applyNavigation(run, details, completed, committed = false) {
   run.observedOrigin = url.origin;
   run.observedPath = url.pathname;
   if (url.origin === "https://accounts.google.com") {
-    const sameAutomatedDocument = (!details.documentId || details.documentId === run.currentDocumentId)
-      && run.automatedDocumentId === run.currentDocumentId;
-    if (!sameAutomatedDocument) {
+    const sameDocument = !details.documentId || details.documentId === run.currentDocumentId;
+    const sameAutomatedStep = sameDocument
+      && run.automatedDocumentId === run.currentDocumentId
+      && run.automatedDocumentPath === url.pathname;
+    const pendingBrowserAuthentication = sameDocument
+      && run.automatedDocumentId === run.currentDocumentId
+      && PENDING_BROWSER_AUTH_STAGES.has(run.stage);
+    if (!sameAutomatedStep && !pendingBrowserAuthentication) {
       run.stage = completed ? "GOOGLE_ACCOUNTS_PAGE_LOADED" : "GOOGLE_ACCOUNTS_NAVIGATED";
     }
   } else if (url.origin === "https://gemini.google.com") {
@@ -418,8 +428,12 @@ async function getStatus(message) {
     } catch {
       frameOrigin = null;
     }
+    const currentGoogleStepAutomated = run.automatedDocumentId === run.currentDocumentId
+      && run.automatedDocumentPath === run.observedPath;
     if (frameOrigin === "https://accounts.google.com"
-        && run.currentDocumentId && run.automatedDocumentId !== run.currentDocumentId) {
+        && run.currentDocumentId
+        && !currentGoogleStepAutomated
+        && !PENDING_BROWSER_AUTH_STAGES.has(run.stage)) {
       await automateGoogleLogin(message.requestId, run.tabId);
       run = await getRun(message.requestId) || run;
     }
@@ -428,18 +442,21 @@ async function getStatus(message) {
   return { ok: true, run: publicRun(run) };
 }
 
-async function automateGoogleDocument(requestId, tabId, documentId, attempt = 0) {
+async function automateGoogleDocument(requestId, tabId, documentId, documentPath, attempt = 0) {
   const run = await getRun(requestId);
   if (!run || run.closed || run.tabId !== tabId
       || run.currentDocumentId !== documentId
-      || run.automatedDocumentId === documentId) {
+      || run.observedPath !== documentPath
+      || (run.automatedDocumentId === documentId && run.automatedDocumentPath === documentPath)
+      || (run.automatedDocumentId === documentId && PENDING_BROWSER_AUTH_STAGES.has(run.stage))) {
     return;
   }
   if (attempt === 0 && /\/challenge\/pwd(?:\/|$)/.test(run.observedPath || "")) {
     await new Promise((resolve) => setTimeout(resolve, PASSWORD_MANAGER_SETTLE_MS));
     const current = await getRun(requestId);
     if (!current || current.closed || current.tabId !== tabId
-        || current.currentDocumentId !== documentId) {
+        || current.currentDocumentId !== documentId
+        || current.observedPath !== documentPath) {
       return;
     }
   }
@@ -453,26 +470,30 @@ async function automateGoogleDocument(requestId, tabId, documentId, attempt = 0)
     outcome = results?.[0]?.result?.step || "WAITING_FOR_SUPPORTED_FORM";
   } catch {
     await updateRun(requestId, (current) => {
-      if (current.tabId !== tabId || current.currentDocumentId !== documentId) {
+      if (current.tabId !== tabId || current.currentDocumentId !== documentId
+          || current.observedPath !== documentPath) {
         return false;
       }
       current.stage = "AUTOMATION_ERROR";
       current.note = "The extension could not execute the approved non-secret Google page step.";
       current.automatedDocumentId = documentId;
+      current.automatedDocumentPath = documentPath;
     });
     return;
   }
   if (outcome === "WAITING_FOR_SUPPORTED_FORM" && attempt < AUTOMATION_RETRY_LIMIT) {
     await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)));
-    return automateGoogleDocument(requestId, tabId, documentId, attempt + 1);
+    return automateGoogleDocument(requestId, tabId, documentId, documentPath, attempt + 1);
   }
   const stage = outcome === "WAITING_FOR_SUPPORTED_FORM" ? "GOOGLE_PAGE_UNRECOGNIZED" : outcome;
   await updateRun(requestId, (current) => {
-    if (current.tabId !== tabId || current.currentDocumentId !== documentId) {
+    if (current.tabId !== tabId || current.currentDocumentId !== documentId
+        || current.observedPath !== documentPath) {
       return false;
     }
     current.stage = stage;
     current.automatedDocumentId = documentId;
+    current.automatedDocumentPath = documentPath;
     current.authAttemptAt = stage === "BROWSER_CREDENTIAL_SUBMIT_REQUESTED" ? Date.now() : null;
     current.authPendingChecks = 0;
     current.nextAuthCheckAt = null;
@@ -490,7 +511,10 @@ async function automateGoogleDocument(requestId, tabId, documentId, attempt = 0)
 
 async function automateGoogleLogin(requestId, tabId) {
   const run = await getRun(requestId);
-  if (!run || run.closed || run.tabId !== tabId || run.automatedDocumentId === run.currentDocumentId) {
+  const currentStepAutomated = run?.automatedDocumentId === run?.currentDocumentId
+    && run?.automatedDocumentPath === run?.observedPath;
+  if (!run || run.closed || run.tabId !== tabId || currentStepAutomated
+      || (run.automatedDocumentId === run.currentDocumentId && PENDING_BROWSER_AUTH_STAGES.has(run.stage))) {
     return;
   }
   const documentId = run.currentDocumentId || null;
@@ -499,23 +523,28 @@ async function automateGoogleLogin(requestId, tabId) {
       current.stage = "AUTOMATION_ERROR";
       current.note = "The exact Google document could not be identified.";
       current.automatedDocumentId = null;
+      current.automatedDocumentPath = null;
     });
     return;
   }
+  const documentPath = run.observedPath || "/";
   const operationKey = `${requestId}:${documentId}`;
   const pending = automationOperations.get(operationKey);
   if (pending) {
-    return pending;
+    if (pending.documentPath === documentPath) {
+      return pending.promise;
+    }
+    await pending.promise.catch(() => {});
+    return automateGoogleLogin(requestId, tabId);
   }
-  const operation = automateGoogleDocument(requestId, tabId, documentId);
-  automationOperations.set(operationKey, operation);
-  try {
-    return await operation;
-  } finally {
-    if (automationOperations.get(operationKey) === operation) {
+  const operation = automateGoogleDocument(requestId, tabId, documentId, documentPath);
+  const trackedOperation = operation.finally(() => {
+    if (automationOperations.get(operationKey)?.promise === trackedOperation) {
       automationOperations.delete(operationKey);
     }
-  }
+  });
+  automationOperations.set(operationKey, { documentPath, promise: trackedOperation });
+  return trackedOperation;
 }
 
 chrome.storage.session.setAccessLevel?.({ accessLevel: "TRUSTED_CONTEXTS" }).catch(() => {});
