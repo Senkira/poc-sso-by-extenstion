@@ -1,6 +1,8 @@
 # poc-sso-gemini-login-by-extension
 
-Lean proof of concept สำหรับเปิด Gemini จากหน้าเว็บ Firebase Hosting จริงผ่าน Microsoft Edge extension ที่ติดตั้งครั้งเดียว
+Lean proof of concept สำหรับเปิด Gemini จากหน้าเว็บ Firebase Hosting จริงผ่าน Google Chrome หรือ Microsoft Edge extension ที่ติดตั้งครั้งเดียว
+
+Chrome และ Edge ใช้ **extension package เดียวกัน** ไม่ต้องแยก source หรือ build เพราะ POC ใช้เฉพาะ Chromium Manifest V3 APIs ที่รองรับร่วมกัน
 
 ## Runtime architecture
 
@@ -13,7 +15,7 @@ https://poc-after-sso-login-gemini.web.app/
   -> hosted page polls truthful lifecycle status
 ```
 
-ไม่มี local server, Node.js, PowerShell, custom protocol หรือ Native Messaging ใน runtime flow เครื่องผู้ใช้ต้องมีเพียง Microsoft Edge และ extension ที่ติดตั้งครั้งเดียว
+ไม่มี local server, Node.js, PowerShell, custom protocol หรือ Native Messaging ใน runtime flow เครื่องผู้ใช้ต้องมีเพียง Google Chrome หรือ Microsoft Edge และ extension ที่ติดตั้งครั้งเดียว
 
 ## What the POC proves
 
@@ -25,10 +27,10 @@ https://poc-after-sso-login-gemini.web.app/
 
 POC **ไม่อ้าง** ว่าพิสูจน์ Google identity, Gemini entitlement หรือ exact signed-in account เพราะ browser extension API ไม่มี trusted identity proof สำหรับ Gemini session
 
-## Install once in Edge
+## Install once in Chrome or Edge
 
 1. ดาวน์โหลด ZIP จาก <https://poc-after-sso-login-gemini.web.app/downloads/gemini-sso-launcher-extension-v0.1.0.zip> และแตกไฟล์
-2. เปิด `edge://extensions`
+2. Chrome เปิด `chrome://extensions` หรือ Edge เปิด `edge://extensions`
 3. เปิด Developer mode
 4. เลือก **Load unpacked** แล้วเลือกโฟลเดอร์ที่แตกไฟล์
 5. ตรวจว่า Extension ID คือ `jeenmgigpkffleijbmfciffiodlcdafh`
@@ -60,9 +62,9 @@ npx --yes firebase-tools deploy --only hosting --project poc-after-sso-login-gem
 
 ## Manual acceptance test
 
-1. เปิด hosted URL ใน Edge profile ที่ติดตั้ง extension
+1. เปิด hosted URL ใน Chrome/Edge profile ที่ติดตั้ง extension
 2. สถานะต้องเปลี่ยนเป็น `Connected`
-3. กด **เปิด Gemini** และยืนยันว่าเกิด Edge window ใหม่
+3. กด **เปิด Gemini** และยืนยันว่าเกิด browser window ใหม่
 4. หน้า hosted ต้องแสดง request UUID และ `WINDOW_CREATED`
 5. ถ้าต้อง login หน้า status ต้องรายงาน `GOOGLE_SIGN_IN_REQUIRED`/`GOOGLE_SIGN_IN_PAGE_LOADED`
 6. หลังถึง Gemini ต้องรายงาน `GEMINI_DOCUMENT_OBSERVED`

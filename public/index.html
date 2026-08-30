@@ -12,7 +12,7 @@
     <main class="shell">
       <header>
         <p class="eyebrow">ONLINE EXTENSION-ONLY POC</p>
-        <h1>เปิด Gemini ผ่าน Edge extension</h1>
+        <h1>เปิด Gemini ผ่าน Chrome / Edge extension</h1>
         <p class="lead">
           หน้านี้ทำงานจาก Firebase Hosting จริงและติดต่อ extension โดยตรง
           ไม่มี local server, PowerShell หรือ custom protocol ใน runtime flow
@@ -51,10 +51,11 @@
       </section>
 
       <details class="card">
-        <summary>ติดตั้ง extension ครั้งแรก</summary>
+        <summary>ติดตั้ง extension ครั้งแรกใน Chrome หรือ Edge</summary>
         <ol>
           <li><a href="/downloads/gemini-sso-launcher-extension-v0.1.0.zip" download>ดาวน์โหลด extension v0.1.0</a> และแตกไฟล์</li>
-          <li>เปิด <code>edge://extensions</code> และเปิด Developer mode</li>
+          <li>Chrome เปิด <code>chrome://extensions</code> หรือ Edge เปิด <code>edge://extensions</code></li>
+          <li>เปิด Developer mode</li>
           <li>เลือก Load unpacked แล้วเลือกโฟลเดอร์ที่แตกไฟล์ไว้</li>
           <li>กลับมาหน้านี้และกด “ตรวจ extension อีกครั้ง”</li>
         </ol>
@@ -62,7 +63,7 @@
       </details>
     </main>
     <footer>
-      Firebase Hosting · Static only · No idle compute
+      Firebase Hosting · Chromium MV3 · Static only · No idle compute
     </footer>
   </body>
 </html>
