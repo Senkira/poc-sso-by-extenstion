@@ -11,6 +11,7 @@ const createdOptions = [];
 let scriptStep = "ACCOUNT_SELECTED";
 let currentFrame = { url: "about:blank", documentId: "doc-blank" };
 let performGoogleStepCallCount = 0;
+let performedSideEffectCount = 0;
 let scriptGate = null;
 let scriptStarted = null;
 const event = (name) => ({ addListener(listener) { listeners[name] = listener; } });
@@ -34,7 +35,7 @@ const chrome = {
   },
   runtime: {
     id: EXTENSION_ID,
-    getManifest() { return { version: "0.4.6" }; },
+    getManifest() { return { version: "0.4.7" }; },
     onMessageExternal: event("external"),
     onMessage: event("internal")
   },
@@ -47,14 +48,21 @@ const chrome = {
   scripting: {
     async executeScript(options) {
       assert.deepEqual(Array.from(options.target.documentIds || []), [currentFrame.documentId]);
-      assert.deepEqual(Array.from(options.args), ["codeassist.04@easybuy.co.th"]);
       if (options.func.name === "performGoogleStep") {
+        assert.equal(options.args[0], "codeassist.04@easybuy.co.th");
+        assert.match(options.args[1], /^\//);
         performGoogleStepCallCount += 1;
         scriptStarted?.();
         if (scriptGate) await scriptGate;
+        const actualPath = new URL(currentFrame.url).pathname;
+        if (actualPath !== options.args[1]) {
+          return [{ result: { step: "STALE_AUTOMATION_STEP" } }];
+        }
+        performedSideEffectCount += 1;
         return [{ result: { step: scriptStep } }];
       }
       if (options.func.name === "inspectPendingBrowserAuthentication") {
+        assert.deepEqual(Array.from(options.args), ["codeassist.04@easybuy.co.th"]);
         return [{ result: scriptStep }];
       }
       throw new Error("Unexpected injected function");
@@ -83,7 +91,12 @@ function accountMarker(attributes = {}, textContent = "") {
   };
 }
 
-function runPasswordStep(markers, processing = false, selectedControl = null) {
+function runPasswordStep(
+  markers,
+  processing = false,
+  selectedControl = null,
+  expectedPath = "/v3/signin/challenge/pwd"
+) {
   let clicked = false;
   workerContext.location = { pathname: "/v3/signin/challenge/pwd" };
   workerContext.document = {
@@ -101,7 +114,13 @@ function runPasswordStep(markers, processing = false, selectedControl = null) {
       return null;
     }
   };
-  return { outcome: workerContext.performGoogleStep("codeassist.04@easybuy.co.th"), clicked };
+  return {
+    outcome: workerContext.performGoogleStep(
+      "codeassist.04@easybuy.co.th",
+      expectedPath
+    ),
+    clicked
+  };
 }
 
 function external(message, sender = { frameId: 0, url: "https://poc-after-sso-login-gemini.web.app/" }) {
@@ -146,6 +165,46 @@ async function main() {
   assert.equal(status.run.stage, "ACCOUNT_SELECTED");
 
   currentFrame = { url: "https://accounts.google.com/v3/signin/challenge/pwd", documentId: "doc-account-chooser" };
+
+  store[`run:${requestId}`].stage = "GOOGLE_ACCOUNTS_PAGE_LOADED";
+  store[`run:${requestId}`].automatedDocumentId = null;
+  store[`run:${requestId}`].automatedDocumentPath = null;
+  store[`run:${requestId}`].authAttemptAt = null;
+  store[`run:${requestId}`].nextAuthCheckAt = null;
+  currentFrame = { url: "https://accounts.google.com/AccountChooser", documentId: "doc-account-chooser" };
+  scriptStep = "ACCOUNT_SELECTED";
+  performGoogleStepCallCount = 0;
+  performedSideEffectCount = 0;
+  const staleStarted = deferred();
+  const staleGate = deferred();
+  scriptStarted = staleStarted.resolve;
+  scriptGate = staleGate.promise;
+  const stalePathStatus = external({ type: "GET_STATUS", version: 3, requestId });
+  await staleStarted.promise;
+  currentFrame = { url: "https://accounts.google.com/v3/signin/challenge/pwd", documentId: "doc-account-chooser" };
+  scriptStep = "BROWSER_CREDENTIAL_SUBMIT_REQUESTED";
+  listeners.completed({
+    frameId: 0,
+    tabId: 61,
+    url: currentFrame.url,
+    timeStamp: Date.now() + 10,
+    documentId: currentFrame.documentId
+  });
+  await flush();
+  staleGate.resolve();
+  await stalePathStatus;
+  scriptGate = null;
+  scriptStarted = null;
+  await flush(8);
+  status = await external({ type: "GET_STATUS", version: 3, requestId });
+  assert.equal(status.run.stage, "BROWSER_CREDENTIAL_SUBMIT_REQUESTED");
+  assert.equal(performGoogleStepCallCount, 2, "stale step must be retried once for the current path");
+  assert.equal(performedSideEffectCount, 1, "stale expected-path execution must have no side effect");
+  store[`run:${requestId}`].stage = "GOOGLE_ACCOUNTS_PAGE_LOADED";
+  store[`run:${requestId}`].automatedDocumentId = null;
+  store[`run:${requestId}`].automatedDocumentPath = null;
+  store[`run:${requestId}`].authAttemptAt = null;
+  store[`run:${requestId}`].nextAuthCheckAt = null;
   scriptStep = "BROWSER_CREDENTIAL_SUBMIT_REQUESTED";
   performGoogleStepCallCount = 0;
   const started = deferred();
@@ -158,7 +217,7 @@ async function main() {
     frameId: 0,
     tabId: 61,
     url: currentFrame.url,
-    timeStamp: Date.now() + 2,
+    timeStamp: Date.now() + 20,
     documentId: currentFrame.documentId
   });
   await flush();
@@ -175,7 +234,7 @@ async function main() {
     frameId: 0,
     tabId: 61,
     url: currentFrame.url,
-    timeStamp: Date.now() + 3
+    timeStamp: Date.now() + 30
   });
   await flush();
   status = await external({ type: "GET_STATUS", version: 3, requestId });
@@ -229,6 +288,15 @@ async function main() {
   );
   assert.equal(selectedAriaControl.outcome.step, "BROWSER_CREDENTIAL_SUBMIT_REQUESTED");
   assert.equal(selectedAriaControl.clicked, true, "the observed selected-account control must authorize the target only");
+
+  const staleSelectedAriaControl = runPasswordStep(
+    [],
+    false,
+    accountMarker({ "aria-label": "เลือก codeassist.04@easybuy.co.th อยู่ สลับบัญชี" }),
+    "/AccountChooser"
+  );
+  assert.equal(staleSelectedAriaControl.outcome.step, "STALE_AUTOMATION_STEP");
+  assert.equal(staleSelectedAriaControl.clicked, false, "stale path must be rejected before any click");
 
   const ambiguousSelectedControls = runPasswordStep([], false, [
     accountMarker({ "aria-label": "เลือก codeassist.04@easybuy.co.th อยู่ สลับบัญชี" }),
@@ -289,7 +357,7 @@ async function main() {
     frameId: 0,
     tabId: 61,
     url: currentFrame.url,
-    timeStamp: Date.now() + 4,
+    timeStamp: Date.now() + 40,
     documentId: currentFrame.documentId
   });
   await flush();
@@ -348,6 +416,7 @@ async function main() {
   console.log("PASS late-completion-does-not-clobber-auth-state");
   console.log("PASS same-document-path-reconciliation-preserves-auth-state");
   console.log("PASS same-document-new-google-step-is-automated-once");
+  console.log("PASS stale-path-script-is-side-effect-free");
   console.log("PASS no-extension-credential-page-or-message");
   console.log("PASS strict-password-challenge-account-binding");
   console.log("PASS ambiguous-selected-account-evidence-fails-closed");

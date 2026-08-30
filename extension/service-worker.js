@@ -239,7 +239,7 @@ function openGemini(message) {
   });
 }
 
-function performGoogleStep(targetEmail) {
+function performGoogleStep(targetEmail, expectedPath) {
   function clickElement(element) {
     if (!element) {
       return false;
@@ -274,6 +274,9 @@ function performGoogleStep(targetEmail) {
   }
 
   const path = location.pathname;
+  if (path !== expectedPath) {
+    return { step: "STALE_AUTOMATION_STEP" };
+  }
   const hasManualChallenge = Boolean(document.querySelector(
     "iframe[src*='recaptcha'], input[autocomplete='one-time-code'], input[type='tel']"
   ));
@@ -465,7 +468,7 @@ async function automateGoogleDocument(requestId, tabId, documentId, documentPath
     const results = await chrome.scripting.executeScript({
       target: { tabId, documentIds: [documentId] },
       func: performGoogleStep,
-      args: [TARGET_EMAIL]
+      args: [TARGET_EMAIL, documentPath]
     });
     outcome = results?.[0]?.result?.step || "WAITING_FOR_SUPPORTED_FORM";
   } catch {
@@ -479,6 +482,10 @@ async function automateGoogleDocument(requestId, tabId, documentId, documentPath
       current.automatedDocumentId = documentId;
       current.automatedDocumentPath = documentPath;
     });
+    return;
+  }
+  if (outcome === "STALE_AUTOMATION_STEP") {
+    await reconcileCurrentFrame(requestId, tabId).catch(() => {});
     return;
   }
   if (outcome === "WAITING_FOR_SUPPORTED_FORM" && attempt < AUTOMATION_RETRY_LIMIT) {
