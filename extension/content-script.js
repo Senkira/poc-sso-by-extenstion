@@ -5,15 +5,24 @@ const MAX_IDENTITY_ATTEMPTS = 8;
 
 function targetAccountIsVisible() {
   const normalized = TARGET_EMAIL.toLowerCase();
-  return Array.from(document.querySelectorAll("[aria-label],[title],[data-email],[data-identifier]")).some((node) => {
-    const candidates = [
-      node.getAttribute("aria-label"),
-      node.getAttribute("title"),
-      node.getAttribute("data-email"),
-      node.getAttribute("data-identifier")
-    ];
-    return candidates.some((candidate) => typeof candidate === "string"
-      && candidate.toLowerCase().includes(normalized));
+  const machineReadableMatch = Array.from(document.querySelectorAll("[data-email],[data-identifier]")).some((node) => {
+    const declared = node.getAttribute("data-email") || node.getAttribute("data-identifier") || "";
+    return declared.trim().toLowerCase() === normalized;
+  });
+  if (machineReadableMatch) {
+    return true;
+  }
+
+  const accountControls = document.querySelectorAll([
+    "a[href*='accounts.google.com/SignOutOptions'][aria-label]",
+    "a[href*='accounts.google.com/AccountChooser'][aria-label]",
+    "button[data-ogsr-up][aria-label]",
+    "[role='button'][data-ogsr-up][aria-label]"
+  ].join(","));
+  return Array.from(accountControls).some((node) => {
+    const label = node.getAttribute("aria-label") || "";
+    const emailTokens = label.match(/[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+/gi) || [];
+    return emailTokens.some((email) => email.toLowerCase() === normalized);
   });
 }
 

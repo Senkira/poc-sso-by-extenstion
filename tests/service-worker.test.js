@@ -31,7 +31,7 @@ const chrome = {
   },
   runtime: {
     id: EXTENSION_ID,
-    getManifest() { return { version: "0.4.0" }; },
+    getManifest() { return { version: "0.4.1" }; },
     onMessageExternal: event("external"),
     onMessage: event("internal")
   },
@@ -57,9 +57,7 @@ const chrome = {
   tabs: { onRemoved: event("tabRemoved") }
 };
 
-vm.runInNewContext(
-  fs.readFileSync("extension/service-worker.js", "utf8"),
-  {
+const workerContext = {
     chrome,
     URL,
     Map,
@@ -69,8 +67,30 @@ vm.runInNewContext(
     Error,
     setTimeout(callback) { Promise.resolve().then(callback); return 1; },
     clearTimeout() {}
-  }
-);
+};
+vm.runInNewContext(fs.readFileSync("extension/service-worker.js", "utf8"), workerContext);
+
+function accountMarker(attributes = {}, textContent = "") {
+  return {
+    textContent,
+    getAttribute(name) { return attributes[name] ?? null; }
+  };
+}
+
+function runPasswordStep(markers, processing = false) {
+  let clicked = false;
+  workerContext.location = { pathname: "/v3/signin/challenge/pwd" };
+  workerContext.document = {
+    querySelectorAll() { return markers; },
+    querySelector(selector) {
+      if (selector.includes("recaptcha") || selector.includes("one-time-code")) return null;
+      if (selector.includes("progressbar")) return processing ? {} : null;
+      if (selector.includes("#passwordNext")) return { click() { clicked = true; } };
+      return null;
+    }
+  };
+  return { outcome: workerContext.performGoogleStep("codeassist.04@easybuy.co.th"), clicked };
+}
 
 function external(message, sender = { frameId: 0, url: "https://poc-after-sso-login-gemini.web.app/" }) {
   return new Promise((resolve) => listeners.external(message, sender, resolve));
@@ -134,7 +154,45 @@ async function main() {
   assert.doesNotMatch(source, /input\[type=['"]password|input\[name=['"]Passwd/);
   assert.doesNotMatch(source, /chrome\.cookies|chrome\.identity/);
 
+  const wrongAccount = runPasswordStep([
+    accountMarker({ "data-email": "other-user@example.com" }),
+    accountMarker({ role: "link" }, "codeassist.04@easybuy.co.th")
+  ]);
+  assert.equal(wrongAccount.outcome.step, "TARGET_ACCOUNT_NOT_CONFIRMED");
+  assert.equal(wrongAccount.clicked, false, "unrelated link text must never authorize password submission");
+
+  const exactAccount = runPasswordStep([
+    accountMarker({ "data-profile-identifier": "codeassist.04@easybuy.co.th" })
+  ]);
+  assert.equal(exactAccount.outcome.step, "BROWSER_CREDENTIAL_SUBMIT_REQUESTED");
+  assert.equal(exactAccount.clicked, true);
+
+  workerContext.document = {
+    querySelectorAll() { return [accountMarker({ "data-email": "codeassist.04@easybuy.co.th" })]; },
+    querySelector() { return {}; }
+  };
+  workerContext.location = { pathname: "/v3/signin/challenge/pwd" };
+  assert.equal(
+    workerContext.inspectPendingBrowserAuthentication("codeassist.04@easybuy.co.th"),
+    "AUTH_PENDING"
+  );
+
   store[`run:${requestId}`].authAttemptAt = Date.now() - 5000;
+  scriptStep = "AUTH_PENDING";
+  status = await external({ type: "GET_STATUS", version: 3, requestId });
+  assert.equal(status.run.stage, "AUTH_PENDING");
+  store[`run:${requestId}`].nextAuthCheckAt = Date.now() - 1;
+  status = await external({ type: "GET_STATUS", version: 3, requestId });
+  assert.equal(status.run.stage, "AUTH_PENDING");
+  store[`run:${requestId}`].nextAuthCheckAt = Date.now() - 1;
+  status = await external({ type: "GET_STATUS", version: 3, requestId });
+  assert.equal(status.run.stage, "AUTH_TIMEOUT");
+  assert.match(status.run.note, /indeterminate/);
+
+  store[`run:${requestId}`].stage = "BROWSER_CREDENTIAL_SUBMIT_REQUESTED";
+  store[`run:${requestId}`].authAttemptAt = Date.now() - 5000;
+  store[`run:${requestId}`].authPendingChecks = 0;
+  store[`run:${requestId}`].nextAuthCheckAt = null;
   scriptStep = "PASSWORD_CHALLENGE_REMAINS";
   status = await external({ type: "GET_STATUS", version: 3, requestId });
   assert.equal(status.run.stage, "USER_ACTION_REQUIRED");
@@ -200,6 +258,8 @@ async function main() {
   console.log("PASS concurrent-window-idempotency");
   console.log("PASS exact-document-non-secret-automation");
   console.log("PASS no-extension-credential-page-or-message");
+  console.log("PASS strict-password-challenge-account-binding");
+  console.log("PASS processing-state-bounded-reconciliation");
   console.log("PASS browser-credential-unavailable-fails-closed");
   console.log("PASS target-account-confirmation-is-monotonic");
   console.log("PASS exact-tab-close-state");

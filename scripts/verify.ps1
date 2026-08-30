@@ -6,11 +6,13 @@ $firebasePath = Join-Path $projectRoot 'firebase.json'
 $appPath = Join-Path $projectRoot 'public\app.js'
 $htmlPath = Join-Path $projectRoot 'public\index.html'
 $workerPath = Join-Path $projectRoot 'extension\service-worker.js'
+$contentScriptPath = Join-Path $projectRoot 'extension\content-script.js'
 $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
 $firebase = Get-Content -Raw -LiteralPath $firebasePath | ConvertFrom-Json
 $app = Get-Content -Raw -LiteralPath $appPath
 $html = Get-Content -Raw -LiteralPath $htmlPath
 $worker = Get-Content -Raw -LiteralPath $workerPath
+$contentScript = Get-Content -Raw -LiteralPath $contentScriptPath
 $archiveName = "gemini-sso-launcher-extension-v$($manifest.version).zip"
 $archivePath = Join-Path $projectRoot "public\downloads\$archiveName"
 
@@ -34,6 +36,10 @@ if ($html -match '(?i)(https?://)?(localhost|127\.0\.0\.1)(:\d+)?') { throw 'Hos
 if ($worker -match 'PASS_PASSWORD|submitGooglePassword|openCredentialPassThrough|login\.html|credentialChallengeId') { throw 'Credential bridge code is forbidden.' }
 if ($worker -match "input\[type=['`"]password|input\[name=['`"]Passwd") { throw 'Extension must not query credential inputs.' }
 if ($worker -match 'chrome\.cookies|chrome\.identity') { throw 'Cookie and OAuth token shortcuts are forbidden.' }
+$forbiddenPasswordGate = "[data-profile-identifier],[data-email],[data-identifier],[role='link']"
+if ($worker.Contains($forbiddenPasswordGate)) { throw 'Generic role-link text must not authorize a password submission.' }
+if ($contentScript -match [regex]::Escape('[aria-label],[title],[data-email],[data-identifier]')) { throw 'Gemini identity detection must not scan every labelled element.' }
+if ($contentScript -match 'candidate\.toLowerCase\(\)\.includes\(normalized\)') { throw 'Substring email matches must not confirm the Gemini account.' }
 
 $retiredCredentialFiles = @('login.html', 'login.js', 'login.css')
 foreach ($name in $retiredCredentialFiles) {
@@ -95,3 +101,4 @@ Write-Output 'PASS no-node-project-dependency'
 Write-Output 'PASS no-credential-page-or-message-path'
 Write-Output 'PASS no-password-input-query'
 Write-Output 'PASS no-cookie-or-oauth-shortcut'
+Write-Output 'PASS strict-account-control-provenance'

@@ -8,7 +8,7 @@ async function flush() {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
-async function runScenario({ readyState, initiallyVisible }) {
+async function runScenario({ readyState, initiallyVisible, unrelated = false }) {
   let visible = initiallyVisible;
   let loadListener = null;
   const scheduled = [];
@@ -18,12 +18,18 @@ async function runScenario({ readyState, initiallyVisible }) {
       if (name === "aria-label" && visible) {
         return "Google Account: codeassist.04@easybuy.co.th";
       }
+      if (name === "href" && visible && !unrelated) {
+        return "https://accounts.google.com/SignOutOptions";
+      }
       return null;
     }
   };
   const document = {
     readyState,
-    querySelectorAll() { return [accountNode]; }
+    querySelectorAll(selector) {
+      if (selector === "[data-email],[data-identifier]") return [];
+      return visible && !unrelated ? [accountNode] : [];
+    }
   };
   const chrome = {
     runtime: {
@@ -51,9 +57,10 @@ async function runScenario({ readyState, initiallyVisible }) {
   }
   await flush();
   assert.equal(messages[0].version, 3);
-  assert.equal(messages[0].targetAccountObserved, initiallyVisible);
+  const initiallyObserved = initiallyVisible && !unrelated;
+  assert.equal(messages[0].targetAccountObserved, initiallyObserved);
 
-  if (!initiallyVisible) {
+  if (!initiallyObserved && !unrelated) {
     assert.equal(scheduled.length, 1);
     visible = true;
     scheduled.shift().callback();
@@ -61,16 +68,21 @@ async function runScenario({ readyState, initiallyVisible }) {
     assert.equal(messages[1].targetAccountObserved, true);
     assert.equal(messages[1].identityCheckComplete, true);
     assert.equal(scheduled.length, 0);
-  } else {
+  } else if (initiallyObserved) {
     assert.equal(messages[0].identityCheckComplete, true);
     assert.equal(scheduled.length, 0);
+  } else {
+    assert.equal(messages[0].identityCheckComplete, false);
+    assert.equal(scheduled.length, 1);
   }
 }
 
 async function main() {
   await runScenario({ readyState: "complete", initiallyVisible: false });
   await runScenario({ readyState: "interactive", initiallyVisible: true });
+  await runScenario({ readyState: "complete", initiallyVisible: true, unrelated: true });
   console.log("PASS target-account-observation-retries");
+  console.log("PASS unrelated-email-label-is-not-account-confirmation");
   console.log("PASS load-event-keeps-zero-attempt-index");
 }
 

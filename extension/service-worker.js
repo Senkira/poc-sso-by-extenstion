@@ -8,6 +8,8 @@ const RUN_TTL_MS = 10 * 60 * 1000;
 const AUTOMATION_RETRY_LIMIT = 4;
 const PASSWORD_MANAGER_SETTLE_MS = 750;
 const BROWSER_AUTH_SETTLE_MS = 4000;
+const AUTH_PENDING_RECHECK_MS = 4000;
+const AUTH_PENDING_RECHECK_LIMIT = 2;
 const runUpdates = new Map();
 const openOperations = new Map();
 
@@ -95,6 +97,8 @@ function applyNavigation(run, details, completed, committed = false) {
     run.identityCheckComplete = false;
     run.automatedDocumentId = null;
     run.authAttemptAt = null;
+    run.authPendingChecks = 0;
+    run.nextAuthCheckAt = null;
   }
   run.lastNavigationAt = navigationAt;
   run.observedOrigin = url.origin;
@@ -230,12 +234,12 @@ function performGoogleStep(targetEmail) {
   function selectedAccountMatches(email) {
     const normalized = email.toLowerCase();
     return Array.from(document.querySelectorAll(
-      "[data-profile-identifier],[data-email],[data-identifier],[role='link']"
+      "[data-profile-identifier],#profileIdentifier[data-email],#profileIdentifier[data-identifier],"
+        + "[aria-current='true'][data-email],[aria-current='true'][data-identifier]"
     )).some((node) => {
       const declared = node.getAttribute("data-profile-identifier")
         || node.getAttribute("data-email")
         || node.getAttribute("data-identifier")
-        || node.textContent
         || "";
       return declared.trim().toLowerCase() === normalized;
     });
@@ -295,17 +299,23 @@ function performGoogleStep(targetEmail) {
 function inspectPendingBrowserAuthentication(targetEmail) {
   const normalized = targetEmail.toLowerCase();
   const accountMatches = Array.from(document.querySelectorAll(
-    "[data-profile-identifier],[data-email],[data-identifier],[role='link']"
+    "[data-profile-identifier],#profileIdentifier[data-email],#profileIdentifier[data-identifier],"
+      + "[aria-current='true'][data-email],[aria-current='true'][data-identifier]"
   )).some((node) => {
     const declared = node.getAttribute("data-profile-identifier")
       || node.getAttribute("data-email")
       || node.getAttribute("data-identifier")
-      || node.textContent
       || "";
     return declared.trim().toLowerCase() === normalized;
   });
   if (/\/challenge\/pwd(?:\/|$)/.test(location.pathname)) {
-    return accountMatches ? "PASSWORD_CHALLENGE_REMAINS" : "TARGET_ACCOUNT_NOT_CONFIRMED";
+    if (!accountMatches) {
+      return "TARGET_ACCOUNT_NOT_CONFIRMED";
+    }
+    const processing = Boolean(document.querySelector(
+      "[role='progressbar'],[aria-busy='true'],#passwordNext[aria-disabled='true'],#passwordNext button[disabled]"
+    ));
+    return processing ? "AUTH_PENDING" : "PASSWORD_CHALLENGE_REMAINS";
   }
   if (/\/challenge\//.test(location.pathname)
       || document.querySelector("iframe[src*='recaptcha'], input[autocomplete='one-time-code'], input[type='tel']")) {
@@ -315,9 +325,14 @@ function inspectPendingBrowserAuthentication(targetEmail) {
 }
 
 async function refreshPendingAuthentication(run) {
-  if (run.stage !== "BROWSER_CREDENTIAL_SUBMIT_REQUESTED"
-      || !Number.isFinite(run.authAttemptAt)
-      || Date.now() - run.authAttemptAt < BROWSER_AUTH_SETTLE_MS
+  const initialSubmit = run.stage === "BROWSER_CREDENTIAL_SUBMIT_REQUESTED";
+  const pendingRecheck = run.stage === "AUTH_PENDING";
+  const readyAt = initialSubmit
+    ? run.authAttemptAt + BROWSER_AUTH_SETTLE_MS
+    : run.nextAuthCheckAt;
+  if ((!initialSubmit && !pendingRecheck)
+      || !Number.isFinite(readyAt)
+      || Date.now() < readyAt
       || !Number.isInteger(run.tabId)
       || !run.currentDocumentId) {
     return run;
@@ -336,7 +351,7 @@ async function refreshPendingAuthentication(run) {
   return updateRun(run.requestId, (current) => {
     if (current.closed || current.tabId !== run.tabId
         || current.currentDocumentId !== run.currentDocumentId
-        || current.stage !== "BROWSER_CREDENTIAL_SUBMIT_REQUESTED") {
+        || (current.stage !== "BROWSER_CREDENTIAL_SUBMIT_REQUESTED" && current.stage !== "AUTH_PENDING")) {
       return false;
     }
     if (outcome === "TARGET_ACCOUNT_NOT_CONFIRMED") {
@@ -348,6 +363,19 @@ async function refreshPendingAuthentication(run) {
     } else if (outcome === "USER_ACTION_REQUIRED") {
       current.stage = "USER_ACTION_REQUIRED";
       current.note = "Google requires MFA, CAPTCHA, device confirmation, or another interactive challenge.";
+    } else if (outcome === "AUTH_PENDING") {
+      current.authPendingChecks = (current.authPendingChecks || 0) + 1;
+      if (current.authPendingChecks <= AUTH_PENDING_RECHECK_LIMIT) {
+        current.stage = "AUTH_PENDING";
+        current.nextAuthCheckAt = Date.now() + AUTH_PENDING_RECHECK_MS;
+        current.note = "Google is still processing browser-managed authentication; no user action is requested yet.";
+      } else {
+        current.stage = "AUTH_TIMEOUT";
+        current.note = "Google remained in a processing state beyond the bounded observation window; authentication outcome is indeterminate.";
+      }
+    } else if (outcome === "AUTH_PAGE_CHANGED") {
+      current.stage = "AUTH_TRANSITION_OBSERVED";
+      current.note = "Google changed the authentication page without a new document; waiting for navigation reconciliation.";
     }
   });
 }
@@ -417,6 +445,8 @@ async function automateGoogleLogin(requestId, tabId, attempt = 0) {
     current.stage = stage;
     current.automatedDocumentId = documentId;
     current.authAttemptAt = stage === "BROWSER_CREDENTIAL_SUBMIT_REQUESTED" ? Date.now() : null;
+    current.authPendingChecks = 0;
+    current.nextAuthCheckAt = null;
     if (stage === "BROWSER_CREDENTIAL_SUBMIT_REQUESTED") {
       current.note = "The extension clicked Google's Next control without reading the credential field; the browser or IdP must supply authentication.";
     } else if (stage === "USER_ACTION_REQUIRED") {
