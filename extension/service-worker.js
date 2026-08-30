@@ -412,20 +412,28 @@ async function passPassword(message, sender) {
       || message.password.length < 1 || message.password.length > 1024) {
     return { ok: false, error: "INVALID_REQUEST" };
   }
-  const run = await getRun(message.requestId);
-  if (!run || run.closed || run.credentialChallengeId !== message.challengeId
-      || run.credentialDocumentId !== run.currentDocumentId
-      || !isCredentialPageSender(sender, run, message.requestId, message.challengeId)) {
-    message.password = "";
+  const password = message.password;
+  message.password = "";
+  let claimedTarget = null;
+  await updateRun(message.requestId, (run) => {
+    if (run.closed || run.credentialChallengeId !== message.challengeId
+        || run.credentialDocumentId !== run.currentDocumentId
+        || !isCredentialPageSender(sender, run, message.requestId, message.challengeId)) {
+      return false;
+    }
+    claimedTarget = { tabId: run.tabId, documentId: run.currentDocumentId };
+    clearChallenge(run);
+    run.stage = "PASSWORD_PASS_THROUGH_IN_FLIGHT";
+    run.note = "The one-time challenge was consumed before exact-document injection.";
+  });
+  if (!claimedTarget) {
     return { ok: false, error: "STALE_OR_UNTRUSTED_CHALLENGE" };
   }
 
-  const password = message.password;
-  message.password = "";
   let submitted = false;
   try {
     const results = await chrome.scripting.executeScript({
-      target: { tabId: run.tabId },
+      target: { tabId: claimedTarget.tabId, documentIds: [claimedTarget.documentId] },
       func: submitGooglePassword,
       args: [password]
     });
@@ -434,11 +442,10 @@ async function passPassword(message, sender) {
     submitted = false;
   }
   await updateRun(message.requestId, (current) => {
-    if (current.credentialChallengeId !== message.challengeId
-        || current.currentDocumentId !== run.currentDocumentId) {
+    if (current.tabId !== claimedTarget.tabId
+        || current.currentDocumentId !== claimedTarget.documentId) {
       return false;
     }
-    clearChallenge(current);
     current.stage = submitted ? "PASSWORD_SUBMITTED" : "PASSWORD_SUBMISSION_FAILED";
     current.note = submitted
       ? "The credential passed directly to the exact Google password document and was not retained."

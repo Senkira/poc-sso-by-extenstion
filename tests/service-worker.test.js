@@ -10,6 +10,8 @@ const listeners = {};
 const createdOptions = [];
 let scriptStep = "ACCOUNT_SELECTED";
 let submittedPassword = null;
+let passwordInjectionCount = 0;
+let releasePasswordInjection = null;
 let currentFrame = { url: "about:blank", documentId: "doc-blank" };
 const event = (name) => ({ addListener(listener) { listeners[name] = listener; } });
 
@@ -62,7 +64,12 @@ const chrome = {
         return [{ result: { step: scriptStep } }];
       }
       if (options.func.name === "submitGooglePassword") {
+        assert.deepEqual(Array.from(options.target.documentIds || []), ["doc-password"]);
+        passwordInjectionCount += 1;
         submittedPassword = options.args[0];
+        if (releasePasswordInjection) {
+          await new Promise((resolve) => { releasePasswordInjection = resolve; });
+        }
         return [{ result: { submitted: true } }];
       }
       throw new Error("Unexpected injected function");
@@ -152,12 +159,33 @@ async function main() {
     challengeId,
     password: oneTimeValue
   };
-  const passResult = await internal(passMessage, {
+  releasePasswordInjection = () => {};
+  const credentialSender = {
     id: EXTENSION_ID,
     frameId: 0,
     tab: { id: 60 },
     url: createdOptions[1].url
-  });
+  };
+  const firstPass = internal(passMessage, credentialSender);
+  await flush();
+  assert.equal(passwordInjectionCount, 1);
+
+  const replayMessage = {
+    type: "PASS_PASSWORD",
+    version: 2,
+    requestId,
+    challengeId,
+    password: "replay-sensitive-value"
+  };
+  const replayResult = await internal(replayMessage, credentialSender);
+  assert.equal(replayResult.ok, false, "concurrent replay must fail after atomic challenge consume");
+  assert.equal(replayMessage.password, "");
+  assert.equal(passwordInjectionCount, 1, "replay must not start a second injection");
+
+  const release = releasePasswordInjection;
+  releasePasswordInjection = null;
+  release();
+  const passResult = await firstPass;
   assert.equal(passResult.ok, true);
   assert.equal(passMessage.password, "", "worker must clear the received message field");
   assert.equal(submittedPassword, oneTimeValue);
@@ -205,6 +233,8 @@ async function main() {
   console.log("PASS google-window-mapping-reconciliation");
   console.log("PASS credential-page-opens-only-after-password-challenge");
   console.log("PASS password-one-time-pass-through-no-storage-or-status");
+  console.log("PASS atomic-challenge-consume-blocks-concurrent-replay");
+  console.log("PASS password-injection-targets-exact-document-id");
   console.log("PASS exact-document-observation");
   console.log("PASS exact-tab-close-state");
   console.log("PASS untrusted-origin-rejection");
