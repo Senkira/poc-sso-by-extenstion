@@ -66,8 +66,15 @@ async function checkExtension() {
   elements.launchButton.disabled = true;
   try {
     const response = await sendToExtension({ type: "PING", version: PROTOCOL_VERSION });
-    if (!response?.ok || response.protocolVersion !== PROTOCOL_VERSION) {
+    if (!response?.ok) {
       throw new Error("PROTOCOL_MISMATCH");
+    }
+    if (response.protocolVersion !== PROTOCOL_VERSION) {
+      setConnection(
+        false,
+        `พบ Gemini extension v${response.version || "unknown"} ที่ใช้ protocol เก่า; กรุณากด Reload ที่หน้า extensions เพื่อใช้ v${REQUIRED_EXTENSION_VERSION}`
+      );
+      return;
     }
     if (response.version !== REQUIRED_EXTENSION_VERSION) {
       setConnection(

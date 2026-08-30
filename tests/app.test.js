@@ -31,6 +31,7 @@ const ids = [
 ];
 let uuidIndex = 0;
 let pingVersion = "0.3.0";
+let pingProtocol = 2;
 let pendingOldPoll = null;
 let statusMode = "observed";
 let now = 1000;
@@ -44,7 +45,7 @@ const chrome = {
       assert.equal(extensionId, "jeenmgigpkffleijbmfciffiodlcdafh");
       assert.equal(message.version, 2);
       if (message.type === "PING") {
-        callback({ ok: true, version: pingVersion, protocolVersion: 2 });
+        callback({ ok: true, version: pingVersion, protocolVersion: pingProtocol });
         return;
       }
       if (message.type === "OPEN_GEMINI") {
@@ -151,10 +152,16 @@ async function main() {
   assert.match(elements.get("#connection-detail").textContent, /v0\.2\.0.*v0\.3\.0.*Reload/);
   assert.equal(elements.get("#launch-button").disabled, true);
 
+  pingProtocol = 1;
+  await elements.get("#retry-button").listeners.click();
+  await flush();
+  assert.match(elements.get("#connection-detail").textContent, /protocol เก่า.*Reload.*v0\.3\.0/);
+
   console.log("PASS stale-run-poll-failure-isolation");
   console.log("PASS single-flight-recursive-polling");
   console.log("PASS lost-run-clears-current-telemetry");
   console.log("PASS old-extension-version-rejection");
+  console.log("PASS old-protocol-reload-guidance");
 }
 
 main().catch((error) => {
