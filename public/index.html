@@ -4,18 +4,19 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light dark">
-    <title>Gemini SSO Launcher POC</title>
+    <title>Gemini Login Bridge POC</title>
     <link rel="stylesheet" href="/styles.css">
-    <script src="/app.js?v=0.2.0" defer></script>
+    <script src="/app.js?v=0.3.0" defer></script>
   </head>
   <body>
     <main class="shell">
       <header>
         <p class="eyebrow">ONLINE EXTENSION-ONLY POC</p>
-        <h1>เข้าสู่ระบบ Gemini ผ่าน Chrome / Edge extension</h1>
+        <h1>ให้ extension ส่งผ่าน login เข้า Gemini</h1>
         <p class="lead">
           หน้านี้ทำงานจาก Firebase Hosting จริงและติดต่อ extension โดยตรง
           ไม่มี local server, PowerShell หรือ custom protocol ใน runtime flow
+          และเว็บไซต์นี้ไม่เห็นรหัสผ่าน
         </p>
       </header>
 
@@ -29,7 +30,7 @@
         </div>
 
         <button id="launch-button" type="button" disabled>
-          เข้าสู่ระบบ Gemini
+          เริ่ม login ผ่าน extension
         </button>
         <button id="retry-button" class="secondary" type="button">
           ตรวจ extension อีกครั้ง
@@ -45,15 +46,15 @@
           <div><dt>Gemini document</dt><dd id="document-value">—</dd></div>
         </dl>
         <p id="truth-note" class="notice">
-          ข้อมูลนี้เป็น local telemetry จาก extension สำหรับ lifecycle ของแท็บที่เปิดจริง
-          แต่ไม่อ้างว่ายืนยันตัวตนหรือ entitlement ของบัญชี Gemini
+          รหัสผ่านรับและส่งผ่านจากหน้า extension โดยตรง ไม่ถูกเก็บใน extension storage
+          หรือส่งเข้า Firebase ส่วนข้อมูลด้านบนเป็น local lifecycle telemetry เท่านั้น
         </p>
       </section>
 
       <details class="card">
         <summary>ติดตั้ง extension ครั้งแรกใน Chrome หรือ Edge</summary>
         <ol>
-          <li><a href="/downloads/gemini-sso-launcher-extension-v0.2.0.zip" download>ดาวน์โหลด extension v0.2.0</a> และแตกไฟล์</li>
+          <li><a href="/downloads/gemini-sso-launcher-extension-v0.3.0.zip" download>ดาวน์โหลด extension v0.3.0</a> และแตกไฟล์</li>
           <li>Chrome เปิด <code>chrome://extensions</code> หรือ Edge เปิด <code>edge://extensions</code></li>
           <li>เปิด Developer mode</li>
           <li>เลือก Load unpacked แล้วเลือกโฟลเดอร์ที่แตกไฟล์ไว้</li>

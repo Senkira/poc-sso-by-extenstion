@@ -10,9 +10,7 @@ function element() {
     disabled: false,
     listeners: {},
     textContent: "",
-    addEventListener(type, listener) {
-      this.listeners[type] = listener;
-    }
+    addEventListener(type, listener) { this.listeners[type] = listener; }
   };
 }
 
@@ -27,24 +25,26 @@ const elements = new Map([
   ["#document-value", element()],
   ["#extension-id", element()]
 ]);
-
 const ids = [
   "123e4567-e89b-42d3-a456-426614174000",
   "123e4567-e89b-42d3-a456-426614174001"
 ];
 let uuidIndex = 0;
-const timers = new Set();
-let nextTimer = 1;
+let pingVersion = "0.3.0";
 let pendingOldPoll = null;
-let pingVersion = "0.2.0";
+let statusMode = "observed";
+let now = 1000;
+let nextTimer = 1;
+const timers = new Map();
 
 const chrome = {
   runtime: {
     lastError: null,
     sendMessage(extensionId, message, callback) {
       assert.equal(extensionId, "jeenmgigpkffleijbmfciffiodlcdafh");
+      assert.equal(message.version, 2);
       if (message.type === "PING") {
-        callback({ ok: true, version: pingVersion, protocolVersion: 1 });
+        callback({ ok: true, version: pingVersion, protocolVersion: 2 });
         return;
       }
       if (message.type === "OPEN_GEMINI") {
@@ -52,7 +52,8 @@ const chrome = {
           ok: true,
           run: {
             requestId: message.requestId,
-            stage: "WINDOW_CREATED",
+            stage: "CREDENTIAL_PAGE_CREATED",
+            updatedAt: 1,
             observedOrigin: null,
             documentObserved: false,
             closed: false
@@ -64,11 +65,16 @@ const chrome = {
         pendingOldPoll = callback;
         return;
       }
+      if (statusMode === "missing") {
+        callback({ ok: false, error: "RUN_NOT_FOUND" });
+        return;
+      }
       callback({
         ok: true,
         run: {
           requestId: message.requestId,
           stage: "GEMINI_DOCUMENT_OBSERVED",
+          updatedAt: 5,
           observedOrigin: "https://gemini.google.com",
           documentObserved: true,
           closed: false
@@ -83,23 +89,29 @@ vm.runInNewContext(
   {
     chrome,
     crypto: { randomUUID: () => ids[uuidIndex++] },
-    Date,
+    Date: { now: () => now },
     Error,
     Promise,
     document: { querySelector: (selector) => elements.get(selector) },
-    setInterval() {
+    setTimeout(callback) {
       const id = nextTimer++;
-      timers.add(id);
+      timers.set(id, callback);
       return id;
     },
-    clearInterval(id) {
-      timers.delete(id);
-    }
+    clearTimeout(id) { timers.delete(id); }
   }
 );
 
 async function flush() {
   await new Promise((resolve) => setImmediate(resolve));
+}
+
+async function fireOnlyTimer() {
+  assert.equal(timers.size, 1);
+  const [id, callback] = timers.entries().next().value;
+  timers.delete(id);
+  callback();
+  await flush();
 }
 
 async function main() {
@@ -111,29 +123,37 @@ async function main() {
 
   const requestB = launch();
   await requestB;
-  assert.equal(elements.get("#request-value").textContent, "123e4567-e89b-42d3-a456-426614174001");
+  assert.equal(elements.get("#request-value").textContent, ids[1]);
   assert.equal(elements.get("#stage-value").textContent, "GEMINI_DOCUMENT_OBSERVED");
   assert.equal(elements.get("#connection-badge").textContent, "Connected");
-  assert.equal(timers.size, 1);
+  assert.equal(timers.size, 1, "single-flight poll schedules only one timeout");
 
   chrome.runtime.lastError = { message: "stale channel closed" };
   pendingOldPoll(undefined);
   chrome.runtime.lastError = null;
   await requestA;
   await flush();
-
-  assert.equal(elements.get("#request-value").textContent, "123e4567-e89b-42d3-a456-426614174001");
+  assert.equal(elements.get("#request-value").textContent, ids[1]);
   assert.equal(elements.get("#stage-value").textContent, "GEMINI_DOCUMENT_OBSERVED");
-  assert.equal(elements.get("#connection-badge").textContent, "Connected");
   assert.equal(timers.size, 1);
 
-  pingVersion = "0.1.0";
+  statusMode = "missing";
+  await fireOnlyTimer();
+  assert.equal(elements.get("#stage-value").textContent, "RUN_NOT_FOUND");
+  assert.equal(elements.get("#origin-value").textContent, "Unavailable");
+  assert.equal(elements.get("#document-value").textContent, "Unavailable");
+  assert.equal(timers.size, 0);
+
+  pingVersion = "0.2.0";
   await elements.get("#retry-button").listeners.click();
   await flush();
   assert.equal(elements.get("#connection-badge").textContent, "Not detected");
-  assert.match(elements.get("#connection-detail").textContent, /v0\.1\.0.*v0\.2\.0.*Reload/);
+  assert.match(elements.get("#connection-detail").textContent, /v0\.2\.0.*v0\.3\.0.*Reload/);
   assert.equal(elements.get("#launch-button").disabled, true);
-  console.log("PASS stale-poll-failure-isolation");
+
+  console.log("PASS stale-run-poll-failure-isolation");
+  console.log("PASS single-flight-recursive-polling");
+  console.log("PASS lost-run-clears-current-telemetry");
   console.log("PASS old-extension-version-rejection");
 }
 

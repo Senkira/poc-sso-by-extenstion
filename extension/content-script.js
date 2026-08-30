@@ -4,7 +4,7 @@ async function reportGeminiDocument(attempt = 0) {
   try {
     const response = await chrome.runtime.sendMessage({
       type: "GEMINI_DOCUMENT_SIGNAL",
-      version: 1,
+      version: 2,
       origin: location.origin,
       readyState: document.readyState
     });
@@ -21,5 +21,5 @@ async function reportGeminiDocument(attempt = 0) {
 if (document.readyState === "complete") {
   reportGeminiDocument();
 } else {
-  window.addEventListener("load", reportGeminiDocument, { once: true });
+  window.addEventListener("load", () => void reportGeminiDocument(0), { once: true });
 }

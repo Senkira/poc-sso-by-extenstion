@@ -1,8 +1,8 @@
 "use strict";
 
 const EXTENSION_ID = "jeenmgigpkffleijbmfciffiodlcdafh";
-const REQUIRED_EXTENSION_VERSION = "0.2.0";
-const PROTOCOL_VERSION = 1;
+const REQUIRED_EXTENSION_VERSION = "0.3.0";
+const PROTOCOL_VERSION = 2;
 const POLL_INTERVAL_MS = 1000;
 const POLL_TIMEOUT_MS = 2 * 60 * 1000;
 
@@ -29,7 +29,6 @@ function sendToExtension(message) {
       reject(new Error("EXTENSION_API_UNAVAILABLE"));
       return;
     }
-
     chrome.runtime.sendMessage(EXTENSION_ID, message, (response) => {
       const lastError = chrome.runtime.lastError;
       if (lastError) {
@@ -49,20 +48,22 @@ function setConnection(connected, detail) {
 }
 
 function renderRun(run) {
-  if (!run) {
-    return;
-  }
   elements.requestValue.textContent = run.requestId;
   elements.stageValue.textContent = run.stage;
   elements.originValue.textContent = run.observedOrigin || "—";
   elements.documentValue.textContent = run.documentObserved ? "Observed" : "Not observed";
 }
 
+function renderUnavailable(stage) {
+  elements.stageValue.textContent = stage;
+  elements.originValue.textContent = "Unavailable";
+  elements.documentValue.textContent = "Unavailable";
+}
+
 async function checkExtension() {
   elements.connectionBadge.textContent = "Checking";
   elements.connectionBadge.className = "badge pending";
   elements.launchButton.disabled = true;
-
   try {
     const response = await sendToExtension({ type: "PING", version: PROTOCOL_VERSION });
     if (!response?.ok || response.protocolVersion !== PROTOCOL_VERSION) {
@@ -71,11 +72,11 @@ async function checkExtension() {
     if (response.version !== REQUIRED_EXTENSION_VERSION) {
       setConnection(
         false,
-        `พบ Gemini SSO Launcher v${response.version || "unknown"} แต่เว็บต้องใช้ v${REQUIRED_EXTENSION_VERSION}; กรุณากด Reload ที่หน้า extensions`
+        `พบ Gemini Login Bridge v${response.version || "unknown"} แต่เว็บต้องใช้ v${REQUIRED_EXTENSION_VERSION}; กรุณากด Reload ที่หน้า extensions`
       );
       return;
     }
-    setConnection(true, `เชื่อมต่อ Gemini SSO Launcher v${response.version} แล้ว`);
+    setConnection(true, `เชื่อมต่อ Gemini Login Bridge v${response.version} แล้ว`);
   } catch {
     setConnection(false, "ไม่พบ extension ที่ติดตั้งและอนุญาตสำหรับเว็บนี้");
   }
@@ -87,22 +88,32 @@ function isActive(run) {
 
 function stopPolling(run) {
   if (run && run.timerId !== null) {
-    clearInterval(run.timerId);
+    clearTimeout(run.timerId);
     run.timerId = null;
   }
 }
 
-async function pollStatus(run) {
-  if (!run || !isActive(run)) {
+function schedulePoll(run) {
+  if (!isActive(run) || run.timerId !== null) {
     return;
   }
+  run.timerId = setTimeout(() => {
+    run.timerId = null;
+    void pollStatus(run);
+  }, POLL_INTERVAL_MS);
+}
 
+async function pollStatus(run) {
+  if (!run || !isActive(run) || run.pollInFlight) {
+    return;
+  }
   if (Date.now() - run.startedAt > POLL_TIMEOUT_MS) {
     stopPolling(run);
-    elements.stageValue.textContent = "STATUS_TIMEOUT";
+    renderUnavailable("STATUS_TIMEOUT");
     return;
   }
 
+  run.pollInFlight = true;
   try {
     const response = await sendToExtension({
       type: "GET_STATUS",
@@ -112,22 +123,33 @@ async function pollStatus(run) {
     if (!isActive(run)) {
       return;
     }
-    if (response?.ok) {
-      renderRun(response.run);
-      if (response.run.closed || response.run.stage === "OPEN_FAILED") {
-        stopPolling(run);
-      }
-    } else {
+    if (!response?.ok || response.run?.requestId !== run.requestId) {
       stopPolling(run);
-      elements.stageValue.textContent = response?.error || "STATUS_UNAVAILABLE";
+      renderUnavailable(response?.error || "STATUS_UNAVAILABLE");
+      return;
+    }
+
+    const updatedAt = Number(response.run.updatedAt) || 0;
+    if (updatedAt >= run.lastRenderedUpdatedAt) {
+      run.lastRenderedUpdatedAt = updatedAt;
+      renderRun(response.run);
+    }
+    if (response.run.closed || response.run.stage === "OPEN_FAILED") {
+      stopPolling(run);
+      return;
     }
   } catch {
     if (!isActive(run)) {
       return;
     }
     stopPolling(run);
+    renderUnavailable("CHANNEL_UNAVAILABLE");
     setConnection(false, "การเชื่อมต่อ extension หยุดทำงานระหว่างตรวจสถานะ");
+    return;
+  } finally {
+    run.pollInFlight = false;
   }
+  schedulePoll(run);
 }
 
 async function launchGemini() {
@@ -136,7 +158,9 @@ async function launchGemini() {
     requestId: crypto.randomUUID(),
     generation: ++generation,
     timerId: null,
-    startedAt: Date.now()
+    startedAt: Date.now(),
+    pollInFlight: false,
+    lastRenderedUpdatedAt: 0
   };
   activeRun = run;
   elements.launchButton.disabled = true;
@@ -154,18 +178,17 @@ async function launchGemini() {
     if (!isActive(run)) {
       return;
     }
-    if (!response?.ok) {
+    if (!response?.ok || response.run?.requestId !== run.requestId) {
       throw new Error(response?.error || "OPEN_FAILED");
     }
+    run.lastRenderedUpdatedAt = Number(response.run.updatedAt) || 0;
     renderRun(response.run);
-    stopPolling(run);
-    run.timerId = setInterval(() => pollStatus(run), POLL_INTERVAL_MS);
     await pollStatus(run);
   } catch (error) {
     if (!isActive(run)) {
       return;
     }
-    elements.stageValue.textContent = error instanceof Error ? error.message : "OPEN_FAILED";
+    renderUnavailable(error instanceof Error ? error.message : "OPEN_FAILED");
   } finally {
     if (isActive(run)) {
       elements.launchButton.disabled = false;
