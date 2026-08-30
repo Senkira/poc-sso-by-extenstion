@@ -9,8 +9,8 @@ const listeners = {};
 let createCount = 0;
 let preMappingNavigationEmitted = false;
 let currentFrame = {
-  url: "https://gemini.google.com/app",
-  documentId: "doc-initial"
+  url: "https://accounts.google.com/AccountChooser?continue=https%3A%2F%2Fgemini.google.com%2Fapp",
+  documentId: "doc-account-chooser"
 };
 const event = (name) => ({ addListener(listener) { listeners[name] = listener; } });
 
@@ -45,7 +45,7 @@ const chrome = {
   },
   runtime: {
     getManifest() {
-      return { version: "0.1.1" };
+      return { version: "0.2.0" };
     },
     onMessageExternal: event("external"),
     onMessage: event("internal")
@@ -97,18 +97,30 @@ async function main() {
   assert.equal(preMappingNavigationEmitted, true);
 
   const reconciled = await external({ type: "GET_STATUS", version: 1, requestId });
-  assert.equal(reconciled.run.stage, "GEMINI_NAVIGATED");
-  assert.equal(reconciled.run.observedOrigin, "https://gemini.google.com");
+  assert.equal(reconciled.run.stage, "GOOGLE_SIGN_IN_REQUIRED");
+  assert.equal(reconciled.run.observedOrigin, "https://accounts.google.com");
 
-  await internal({ type: "GEMINI_DOCUMENT_SIGNAL" });
-  listeners.completed({
+  currentFrame = {
+    url: "https://gemini.google.com/app",
+    documentId: "doc-gemini"
+  };
+  listeners.committed({
     frameId: 0,
     tabId: 60,
-    url: "https://gemini.google.com/app",
+    url: currentFrame.url,
     timeStamp: Date.now() + 1,
-    documentId: "doc-initial"
+    documentId: currentFrame.documentId
   });
   await new Promise((resolve) => setTimeout(resolve, 0));
+  await internal(
+    { type: "GEMINI_DOCUMENT_SIGNAL" },
+    {
+      frameId: 0,
+      url: currentFrame.url,
+      documentId: currentFrame.documentId,
+      tab: { id: 60 }
+    }
+  );
 
   const observed = await external({ type: "GET_STATUS", version: 1, requestId });
   assert.equal(observed.run.stage, "GEMINI_DOCUMENT_OBSERVED");
@@ -131,7 +143,7 @@ async function main() {
     {
       frameId: 0,
       url: "https://gemini.google.com/app",
-      documentId: "doc-initial",
+      documentId: "doc-gemini",
       tab: { id: 60 }
     }
   );

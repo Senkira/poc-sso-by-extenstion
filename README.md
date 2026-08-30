@@ -1,6 +1,6 @@
 # poc-sso-gemini-login-by-extension
 
-Lean proof of concept สำหรับเปิด Gemini จากหน้าเว็บ Firebase Hosting จริงผ่าน Google Chrome หรือ Microsoft Edge extension ที่ติดตั้งครั้งเดียว
+Lean proof of concept สำหรับเริ่ม Google account selection แล้วเข้า Gemini จากหน้าเว็บ Firebase Hosting จริงผ่าน Google Chrome หรือ Microsoft Edge extension ที่ติดตั้งครั้งเดียว
 
 Chrome และ Edge ใช้ **extension package เดียวกัน** ไม่ต้องแยก source หรือ build เพราะ POC ใช้เฉพาะ Chromium Manifest V3 APIs ที่รองรับร่วมกัน
 
@@ -10,7 +10,7 @@ Chrome และ Edge ใช้ **extension package เดียวกัน** �
 https://poc-after-sso-login-gemini.web.app/
   -> chrome.runtime.sendMessage(fixed extension ID)
   -> MV3 service worker validates the exact hosted origin
-  -> chrome.windows.create(https://gemini.google.com/app)
+  -> chrome.windows.create(Google AccountChooser -> Gemini)
   -> extension observes only the tab/window it created
   -> hosted page polls truthful lifecycle status
 ```
@@ -21,7 +21,7 @@ https://poc-after-sso-login-gemini.web.app/
 
 - หน้า launcher มาจาก Firebase Hosting URL จริง
 - หน้าเว็บติดต่อ extension package/ID ที่กำหนดไว้จริง
-- extension เป็นผู้สร้าง Chrome/Edge window และ tab ที่เปิด Gemini จริง
+- extension เป็นผู้สร้าง Chrome/Edge window และ tab ที่เริ่มจาก Google Account Chooser แล้ว redirect เข้า Gemini หลังผู้ใช้ยืนยันตัวตน
 - extension ผูก navigation/document observations กับ request และ tab ที่สร้าง
 - หาก Gemini redirect ไป Google sign-in จะรายงานว่า sign-in page ถูกเปิด ไม่ปลอมเป็น success
 
@@ -29,7 +29,7 @@ POC **ไม่อ้าง** ว่าพิสูจน์ Google identity, Ge
 
 ## Install once in Chrome or Edge
 
-1. ดาวน์โหลด ZIP จาก <https://poc-after-sso-login-gemini.web.app/downloads/gemini-sso-launcher-extension-v0.1.1.zip> และแตกไฟล์
+1. ดาวน์โหลด ZIP จาก <https://poc-after-sso-login-gemini.web.app/downloads/gemini-sso-launcher-extension-v0.2.0.zip> และแตกไฟล์
 2. Chrome เปิด `chrome://extensions` หรือ Edge เปิด `edge://extensions`
 3. เปิด Developer mode
 4. เลือก **Load unpacked** แล้วเลือกโฟลเดอร์ที่แตกไฟล์
@@ -71,7 +71,7 @@ npx --yes firebase-tools deploy --only hosting --project poc-after-sso-login-gem
 
 1. เปิด hosted URL ใน Chrome/Edge profile ที่ติดตั้ง extension
 2. สถานะต้องเปลี่ยนเป็น `Connected`
-3. กด **เปิด Gemini** และยืนยันว่าเกิด browser window ใหม่
+3. กด **เข้าสู่ระบบ Gemini** และยืนยันว่าเกิด browser window ใหม่ที่ Google Account Chooser
 4. หน้า hosted ต้องแสดง request UUID และ `WINDOW_CREATED`
 5. ถ้าต้อง login หน้า status ต้องรายงาน `GOOGLE_SIGN_IN_REQUIRED`/`GOOGLE_SIGN_IN_PAGE_LOADED`
 6. หลังถึง Gemini ต้องรายงาน `GEMINI_DOCUMENT_OBSERVED`

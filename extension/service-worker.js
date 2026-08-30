@@ -2,7 +2,7 @@
 
 const PROTOCOL_VERSION = 1;
 const ALLOWED_ORIGIN = "https://poc-after-sso-login-gemini.web.app";
-const GEMINI_URL = "https://gemini.google.com/app";
+const LOGIN_URL = "https://accounts.google.com/AccountChooser?continue=https%3A%2F%2Fgemini.google.com%2Fapp";
 const RUN_TTL_MS = 10 * 60 * 1000;
 const runUpdates = new Map();
 const openOperations = new Map();
@@ -151,12 +151,12 @@ async function openGeminiOnce(message) {
     observedOrigin: null,
     documentObserved: false,
     closed: false,
-    note: "Login identity is not asserted by this POC."
+    note: "Select and authenticate the approved Google account. Login identity is not asserted by this POC."
   });
 
   try {
     const createdWindow = await chrome.windows.create({
-      url: GEMINI_URL,
+      url: LOGIN_URL,
       type: "normal",
       focused: true
     });
