@@ -31,7 +31,7 @@ const chrome = {
   },
   runtime: {
     id: EXTENSION_ID,
-    getManifest() { return { version: "0.4.1" }; },
+    getManifest() { return { version: "0.4.2" }; },
     onMessageExternal: event("external"),
     onMessage: event("internal")
   },
@@ -77,13 +77,14 @@ function accountMarker(attributes = {}, textContent = "") {
   };
 }
 
-function runPasswordStep(markers, processing = false) {
+function runPasswordStep(markers, processing = false, selectedControl = null) {
   let clicked = false;
   workerContext.location = { pathname: "/v3/signin/challenge/pwd" };
   workerContext.document = {
     querySelectorAll() { return markers; },
     querySelector(selector) {
       if (selector.includes("recaptcha") || selector.includes("one-time-code")) return null;
+      if (selector === "[role='link'][jsname='af8ijd'][aria-label]") return selectedControl;
       if (selector.includes("progressbar")) return processing ? {} : null;
       if (selector.includes("#passwordNext")) return { click() { clicked = true; } };
       return null;
@@ -128,25 +129,10 @@ async function main() {
   assert.equal(status.run.stage, "ACCOUNT_SELECTED");
 
   currentFrame = { url: "https://accounts.google.com/v3/signin/challenge/pwd", documentId: "doc-password" };
-  listeners.committed({
-    frameId: 0,
-    tabId: 61,
-    url: currentFrame.url,
-    timeStamp: Date.now() + 2,
-    documentId: currentFrame.documentId
-  });
-  await flush();
   scriptStep = "BROWSER_CREDENTIAL_SUBMIT_REQUESTED";
-  listeners.completed({
-    frameId: 0,
-    tabId: 61,
-    url: currentFrame.url,
-    timeStamp: Date.now() + 3,
-    documentId: currentFrame.documentId
-  });
-  await flush();
   status = await external({ type: "GET_STATUS", version: 3, requestId });
   assert.equal(status.run.stage, "BROWSER_CREDENTIAL_SUBMIT_REQUESTED");
+  assert.equal(status.run.documentObserved, false, "GET_STATUS must reconcile a missed navigation event");
   assert.equal(createdOptions.length, 1, "extension must never open a credential page");
 
   const source = fs.readFileSync("extension/service-worker.js", "utf8");
@@ -167,9 +153,24 @@ async function main() {
   assert.equal(exactAccount.outcome.step, "BROWSER_CREDENTIAL_SUBMIT_REQUESTED");
   assert.equal(exactAccount.clicked, true);
 
+  const selectedAriaControl = runPasswordStep(
+    [accountMarker({ "data-profile-identifier": "" })],
+    false,
+    accountMarker({
+      role: "link",
+      jsname: "af8ijd",
+      "aria-label": "เลือก codeassist.04@easybuy.co.th อยู่ สลับบัญชี"
+    })
+  );
+  assert.equal(selectedAriaControl.outcome.step, "BROWSER_CREDENTIAL_SUBMIT_REQUESTED");
+  assert.equal(selectedAriaControl.clicked, true, "the observed selected-account control must authorize the target only");
+
   workerContext.document = {
     querySelectorAll() { return [accountMarker({ "data-email": "codeassist.04@easybuy.co.th" })]; },
-    querySelector() { return {}; }
+    querySelector(selector) {
+      if (selector === "[role='link'][jsname='af8ijd'][aria-label]") return null;
+      return {};
+    }
   };
   workerContext.location = { pathname: "/v3/signin/challenge/pwd" };
   assert.equal(
@@ -257,6 +258,7 @@ async function main() {
 
   console.log("PASS concurrent-window-idempotency");
   console.log("PASS exact-document-non-secret-automation");
+  console.log("PASS missed-navigation-status-reconciliation");
   console.log("PASS no-extension-credential-page-or-message");
   console.log("PASS strict-password-challenge-account-binding");
   console.log("PASS processing-state-bounded-reconciliation");

@@ -124,13 +124,26 @@ function applyNavigation(run, details, completed, committed = false) {
 async function reconcileCurrentFrame(requestId, tabId) {
   const frame = await chrome.webNavigation.getFrame({ tabId, frameId: 0 });
   if (!frame?.url) {
-    return;
+    return null;
   }
-  await updateRun(requestId, (run) => applyNavigation(run, {
-    url: frame.url,
-    documentId: frame.documentId,
-    timeStamp: Date.now()
-  }, false, true));
+  await updateRun(requestId, (run) => {
+    let url;
+    try {
+      url = new URL(frame.url);
+    } catch {
+      return false;
+    }
+    if (frame.documentId && frame.documentId === run.currentDocumentId
+        && url.origin === run.observedOrigin && url.pathname === run.observedPath) {
+      return false;
+    }
+    return applyNavigation(run, {
+      url: frame.url,
+      documentId: frame.documentId,
+      timeStamp: Date.now()
+    }, false, true);
+  });
+  return frame;
 }
 
 function publicRun(run) {
@@ -233,7 +246,7 @@ function performGoogleStep(targetEmail) {
 
   function selectedAccountMatches(email) {
     const normalized = email.toLowerCase();
-    return Array.from(document.querySelectorAll(
+    const machineReadableMatch = Array.from(document.querySelectorAll(
       "[data-profile-identifier],#profileIdentifier[data-email],#profileIdentifier[data-identifier],"
         + "[aria-current='true'][data-email],[aria-current='true'][data-identifier]"
     )).some((node) => {
@@ -243,6 +256,16 @@ function performGoogleStep(targetEmail) {
         || "";
       return declared.trim().toLowerCase() === normalized;
     });
+    if (machineReadableMatch) {
+      return true;
+    }
+    const selectedControl = document.querySelector("[role='link'][jsname='af8ijd'][aria-label]");
+    if (!selectedControl) {
+      return false;
+    }
+    const label = selectedControl.getAttribute("aria-label") || "";
+    const emailTokens = label.match(/[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+/gi) || [];
+    return emailTokens.some((candidate) => candidate.toLowerCase() === normalized);
   }
 
   const path = location.pathname;
@@ -298,7 +321,7 @@ function performGoogleStep(targetEmail) {
 
 function inspectPendingBrowserAuthentication(targetEmail) {
   const normalized = targetEmail.toLowerCase();
-  const accountMatches = Array.from(document.querySelectorAll(
+  const machineReadableMatch = Array.from(document.querySelectorAll(
     "[data-profile-identifier],#profileIdentifier[data-email],#profileIdentifier[data-identifier],"
       + "[aria-current='true'][data-email],[aria-current='true'][data-identifier]"
   )).some((node) => {
@@ -308,6 +331,11 @@ function inspectPendingBrowserAuthentication(targetEmail) {
       || "";
     return declared.trim().toLowerCase() === normalized;
   });
+  const selectedControl = document.querySelector("[role='link'][jsname='af8ijd'][aria-label]");
+  const selectedLabel = selectedControl?.getAttribute("aria-label") || "";
+  const selectedEmailTokens = selectedLabel.match(/[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+/gi) || [];
+  const accountMatches = machineReadableMatch
+    || selectedEmailTokens.some((candidate) => candidate.toLowerCase() === normalized);
   if (/\/challenge\/pwd(?:\/|$)/.test(location.pathname)) {
     if (!accountMatches) {
       return "TARGET_ACCOUNT_NOT_CONFIRMED";
@@ -387,6 +415,21 @@ async function getStatus(message) {
   let run = await getRun(message.requestId);
   if (!run) {
     return { ok: false, error: "RUN_NOT_FOUND" };
+  }
+  if (!run.closed && Number.isInteger(run.tabId)) {
+    const frame = await reconcileCurrentFrame(message.requestId, run.tabId).catch(() => null);
+    run = await getRun(message.requestId) || run;
+    let frameOrigin;
+    try {
+      frameOrigin = new URL(frame?.url).origin;
+    } catch {
+      frameOrigin = null;
+    }
+    if (frameOrigin === "https://accounts.google.com"
+        && run.currentDocumentId && run.automatedDocumentId !== run.currentDocumentId) {
+      await automateGoogleLogin(message.requestId, run.tabId);
+      run = await getRun(message.requestId) || run;
+    }
   }
   run = await refreshPendingAuthentication(run) || run;
   return { ok: true, run: publicRun(run) };
