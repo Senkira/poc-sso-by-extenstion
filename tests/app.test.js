@@ -36,6 +36,7 @@ let uuidIndex = 0;
 const timers = new Set();
 let nextTimer = 1;
 let pendingOldPoll = null;
+let pingVersion = "0.2.0";
 
 const chrome = {
   runtime: {
@@ -43,7 +44,7 @@ const chrome = {
     sendMessage(extensionId, message, callback) {
       assert.equal(extensionId, "jeenmgigpkffleijbmfciffiodlcdafh");
       if (message.type === "PING") {
-        callback({ ok: true, version: "0.2.0", protocolVersion: 1 });
+        callback({ ok: true, version: pingVersion, protocolVersion: 1 });
         return;
       }
       if (message.type === "OPEN_GEMINI") {
@@ -125,7 +126,15 @@ async function main() {
   assert.equal(elements.get("#stage-value").textContent, "GEMINI_DOCUMENT_OBSERVED");
   assert.equal(elements.get("#connection-badge").textContent, "Connected");
   assert.equal(timers.size, 1);
+
+  pingVersion = "0.1.0";
+  await elements.get("#retry-button").listeners.click();
+  await flush();
+  assert.equal(elements.get("#connection-badge").textContent, "Not detected");
+  assert.match(elements.get("#connection-detail").textContent, /v0\.1\.0.*v0\.2\.0.*Reload/);
+  assert.equal(elements.get("#launch-button").disabled, true);
   console.log("PASS stale-poll-failure-isolation");
+  console.log("PASS old-extension-version-rejection");
 }
 
 main().catch((error) => {

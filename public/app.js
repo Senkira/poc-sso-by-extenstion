@@ -1,6 +1,7 @@
 "use strict";
 
 const EXTENSION_ID = "jeenmgigpkffleijbmfciffiodlcdafh";
+const REQUIRED_EXTENSION_VERSION = "0.2.0";
 const PROTOCOL_VERSION = 1;
 const POLL_INTERVAL_MS = 1000;
 const POLL_TIMEOUT_MS = 2 * 60 * 1000;
@@ -66,6 +67,13 @@ async function checkExtension() {
     const response = await sendToExtension({ type: "PING", version: PROTOCOL_VERSION });
     if (!response?.ok || response.protocolVersion !== PROTOCOL_VERSION) {
       throw new Error("PROTOCOL_MISMATCH");
+    }
+    if (response.version !== REQUIRED_EXTENSION_VERSION) {
+      setConnection(
+        false,
+        `พบ Gemini SSO Launcher v${response.version || "unknown"} แต่เว็บต้องใช้ v${REQUIRED_EXTENSION_VERSION}; กรุณากด Reload ที่หน้า extensions`
+      );
+      return;
     }
     setConnection(true, `เชื่อมต่อ Gemini SSO Launcher v${response.version} แล้ว`);
   } catch {
