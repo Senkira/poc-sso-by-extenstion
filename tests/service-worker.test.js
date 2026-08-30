@@ -34,7 +34,7 @@ const chrome = {
   },
   runtime: {
     id: EXTENSION_ID,
-    getManifest() { return { version: "0.4.3" }; },
+    getManifest() { return { version: "0.4.4" }; },
     onMessageExternal: event("external"),
     onMessage: event("internal")
   },
@@ -87,7 +87,12 @@ function runPasswordStep(markers, processing = false, selectedControl = null) {
   let clicked = false;
   workerContext.location = { pathname: "/v3/signin/challenge/pwd" };
   workerContext.document = {
-    querySelectorAll() { return markers; },
+    querySelectorAll(selector) {
+      if (selector === "[role='link'][jsname='af8ijd'][aria-label]") {
+        return selectedControl ? (Array.isArray(selectedControl) ? selectedControl : [selectedControl]) : [];
+      }
+      return markers;
+    },
     querySelector(selector) {
       if (selector.includes("recaptcha") || selector.includes("one-time-code")) return null;
       if (selector === "[role='link'][jsname='af8ijd'][aria-label]") return selectedControl;
@@ -195,8 +200,8 @@ async function main() {
   const exactAccount = runPasswordStep([
     accountMarker({ "data-profile-identifier": "codeassist.04@easybuy.co.th" })
   ]);
-  assert.equal(exactAccount.outcome.step, "BROWSER_CREDENTIAL_SUBMIT_REQUESTED");
-  assert.equal(exactAccount.clicked, true);
+  assert.equal(exactAccount.outcome.step, "TARGET_ACCOUNT_NOT_CONFIRMED");
+  assert.equal(exactAccount.clicked, false, "a bare profile marker is not selected-account evidence");
 
   const selectedAriaControl = runPasswordStep(
     [accountMarker({ "data-profile-identifier": "" })],
@@ -210,8 +215,25 @@ async function main() {
   assert.equal(selectedAriaControl.outcome.step, "BROWSER_CREDENTIAL_SUBMIT_REQUESTED");
   assert.equal(selectedAriaControl.clicked, true, "the observed selected-account control must authorize the target only");
 
+  const ambiguousSelectedControls = runPasswordStep([], false, [
+    accountMarker({ "aria-label": "เลือก codeassist.04@easybuy.co.th อยู่ สลับบัญชี" }),
+    accountMarker({ "aria-label": "เลือก other-user@example.com อยู่ สลับบัญชี" })
+  ]);
+  assert.equal(ambiguousSelectedControls.outcome.step, "TARGET_ACCOUNT_NOT_CONFIRMED");
+  assert.equal(ambiguousSelectedControls.clicked, false, "multiple selected-account controls must fail closed");
+
+  const ambiguousSelectedLabel = runPasswordStep([], false, accountMarker({
+    "aria-label": "เลือก codeassist.04@easybuy.co.th และ other-user@example.com"
+  }));
+  assert.equal(ambiguousSelectedLabel.outcome.step, "TARGET_ACCOUNT_NOT_CONFIRMED");
+  assert.equal(ambiguousSelectedLabel.clicked, false, "multiple account tokens must fail closed");
+
   workerContext.document = {
-    querySelectorAll() { return [accountMarker({ "data-email": "codeassist.04@easybuy.co.th" })]; },
+    querySelectorAll(selector) {
+      return selector === "[role='link'][jsname='af8ijd'][aria-label]"
+        ? [accountMarker({ "aria-label": "เลือก codeassist.04@easybuy.co.th อยู่ สลับบัญชี" })]
+        : [];
+    },
     querySelector(selector) {
       if (selector === "[role='link'][jsname='af8ijd'][aria-label]") return null;
       return {};
@@ -308,6 +330,7 @@ async function main() {
   console.log("PASS late-completion-does-not-clobber-auth-state");
   console.log("PASS no-extension-credential-page-or-message");
   console.log("PASS strict-password-challenge-account-binding");
+  console.log("PASS ambiguous-selected-account-evidence-fails-closed");
   console.log("PASS processing-state-bounded-reconciliation");
   console.log("PASS browser-credential-unavailable-fails-closed");
   console.log("PASS target-account-confirmation-is-monotonic");

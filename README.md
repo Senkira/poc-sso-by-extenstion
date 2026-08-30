@@ -46,7 +46,7 @@ Extension ไม่ทำ:
 
 ## Install once in Chrome or Edge
 
-1. ดาวน์โหลด ZIP จาก <https://poc-after-sso-login-gemini.web.app/downloads/gemini-sso-launcher-extension-v0.4.3.zip> และแตกไฟล์
+1. ดาวน์โหลด ZIP จาก <https://poc-after-sso-login-gemini.web.app/downloads/gemini-sso-launcher-extension-v0.4.4.zip> และแตกไฟล์
 2. Chrome เปิด `chrome://extensions` หรือ Edge เปิด `edge://extensions`
 3. เปิด Developer mode
 4. เลือก **Load unpacked** แล้วเลือกโฟลเดอร์ที่แตกไฟล์
@@ -92,7 +92,7 @@ npx --yes firebase-tools deploy --only hosting --project poc-after-sso-login-gem
 ## Acceptance test
 
 1. เตรียม Chrome/Edge profile ให้ Google logout แต่มี saved browser credential หรือ authenticated Corporate IdP session
-2. ติดตั้ง extension v0.4.3 จาก hosted ZIP
+2. ติดตั้ง extension v0.4.4 จาก hosted ZIP
 3. เปิด production Firebase URL และต้องเห็น `Connected`
 4. กดปุ่มหนึ่งครั้ง แล้วห้ามมี keyboard/mouse interaction หลังจากนั้น
 5. Extension ต้องเลือกบัญชี `codeassist.04@easybuy.co.th` เอง

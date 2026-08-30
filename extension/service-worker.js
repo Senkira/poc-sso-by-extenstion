@@ -252,26 +252,16 @@ function performGoogleStep(targetEmail) {
 
   function selectedAccountMatches(email) {
     const normalized = email.toLowerCase();
-    const machineReadableMatch = Array.from(document.querySelectorAll(
-      "[data-profile-identifier],#profileIdentifier[data-email],#profileIdentifier[data-identifier],"
-        + "[aria-current='true'][data-email],[aria-current='true'][data-identifier]"
-    )).some((node) => {
-      const declared = node.getAttribute("data-profile-identifier")
-        || node.getAttribute("data-email")
-        || node.getAttribute("data-identifier")
-        || "";
-      return declared.trim().toLowerCase() === normalized;
-    });
-    if (machineReadableMatch) {
-      return true;
-    }
-    const selectedControl = document.querySelector("[role='link'][jsname='af8ijd'][aria-label]");
-    if (!selectedControl) {
+    const selectedControls = Array.from(document.querySelectorAll(
+      "[role='link'][jsname='af8ijd'][aria-label]"
+    ));
+    if (selectedControls.length !== 1) {
       return false;
     }
-    const label = selectedControl.getAttribute("aria-label") || "";
+    const label = selectedControls[0].getAttribute("aria-label") || "";
     const emailTokens = label.match(/[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+/gi) || [];
-    return emailTokens.some((candidate) => candidate.toLowerCase() === normalized);
+    const uniqueEmails = [...new Set(emailTokens.map((candidate) => candidate.toLowerCase()))];
+    return uniqueEmails.length === 1 && uniqueEmails[0] === normalized;
   }
 
   const path = location.pathname;
@@ -327,21 +317,19 @@ function performGoogleStep(targetEmail) {
 
 function inspectPendingBrowserAuthentication(targetEmail) {
   const normalized = targetEmail.toLowerCase();
-  const machineReadableMatch = Array.from(document.querySelectorAll(
-    "[data-profile-identifier],#profileIdentifier[data-email],#profileIdentifier[data-identifier],"
-      + "[aria-current='true'][data-email],[aria-current='true'][data-identifier]"
-  )).some((node) => {
-    const declared = node.getAttribute("data-profile-identifier")
-      || node.getAttribute("data-email")
-      || node.getAttribute("data-identifier")
-      || "";
-    return declared.trim().toLowerCase() === normalized;
-  });
-  const selectedControl = document.querySelector("[role='link'][jsname='af8ijd'][aria-label]");
-  const selectedLabel = selectedControl?.getAttribute("aria-label") || "";
+  const selectedControls = Array.from(document.querySelectorAll(
+    "[role='link'][jsname='af8ijd'][aria-label]"
+  ));
+  const selectedLabel = selectedControls.length === 1
+    ? selectedControls[0].getAttribute("aria-label") || ""
+    : "";
   const selectedEmailTokens = selectedLabel.match(/[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+/gi) || [];
-  const accountMatches = machineReadableMatch
-    || selectedEmailTokens.some((candidate) => candidate.toLowerCase() === normalized);
+  const uniqueSelectedEmails = [...new Set(
+    selectedEmailTokens.map((candidate) => candidate.toLowerCase())
+  )];
+  const accountMatches = selectedControls.length === 1
+    && uniqueSelectedEmails.length === 1
+    && uniqueSelectedEmails[0] === normalized;
   if (/\/challenge\/pwd(?:\/|$)/.test(location.pathname)) {
     if (!accountMatches) {
       return "TARGET_ACCOUNT_NOT_CONFIRMED";
