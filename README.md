@@ -21,7 +21,7 @@ https://poc-after-sso-login-gemini.web.app/
 
 - หน้า launcher มาจาก Firebase Hosting URL จริง
 - หน้าเว็บติดต่อ extension package/ID ที่กำหนดไว้จริง
-- extension เป็นผู้สร้าง Edge window/tab ที่เปิด Gemini จริง
+- extension เป็นผู้สร้าง Chrome/Edge window และ tab ที่เปิด Gemini จริง
 - extension ผูก navigation/document observations กับ request และ tab ที่สร้าง
 - หาก Gemini redirect ไป Google sign-in จะรายงานว่า sign-in page ถูกเปิด ไม่ปลอมเป็น success
 
@@ -70,3 +70,12 @@ npx --yes firebase-tools deploy --only hosting --project poc-after-sso-login-gem
 6. หลังถึง Gemini ต้องรายงาน `GEMINI_DOCUMENT_OBSERVED`
 7. ปิด tab/window แล้ว status ต้องเป็น `TAB_CLOSED`
 8. หาก reload/update extension ระหว่าง run หน้าเว็บต้องรายงาน `RUN_NOT_FOUND` ไม่ค้างหรือแสดง success เก่า
+
+## Verified browser evidence
+
+ทดสอบกับ Google Chrome `151.0.7922.175` เมื่อ 2026-08-30 โดยใช้ hosted URL จริงและ extension `0.1.0`:
+
+- หน้า hosted รายงาน `Connected`
+- การกด **เปิด Gemini** สร้างหน้าต่างไปที่ `https://gemini.google.com/app`
+- request `e80659e0-f0d6-47d6-b8f0-6311674130ad` จบที่ `GEMINI_DOCUMENT_OBSERVED`
+- observed origin คือ `https://gemini.google.com` และ Gemini document เป็น `Observed`
