@@ -44,6 +44,10 @@ Extension ไม่ทำ:
 
 บน Chrome และ Edge profiles ที่ใช้ตรวจ POC เมื่อวันที่ 2026-08-30 extension เลือกบัญชีเป้าหมายสำเร็จ แต่ Google ไปที่หน้า `accounts.google.com/.../challenge/pwd` โดยตรง ไม่มี Corporate SSO redirect และไม่เดินต่อเอง ทั้งสอง browser จึงไม่มี silent credential source ที่ใช้ได้ในรอบทดสอบนี้
 
+ตรวจสมมติฐานเรื่อง autofill race เพิ่มแล้วโดยปล่อย password challenge ค้าง 8 วินาที กด Google Next ซ้ำจาก browser UI โดยไม่อ่านค่า credential และลองกระตุ้น Chrome control `Verify it's you` ก่อนกดซ้ำ ผลยังอยู่ document และ URL เดิม จึงไม่ใช่ปัญหาที่แก้ได้ด้วยการเพิ่ม delay ใน extension นอกจากนี้การ focus ช่อง password ไม่แสดง browser-managed credential suggestion สำหรับบัญชีเป้าหมาย
+
+ดังนั้น E2E ของ environment นี้พิสูจน์ได้ถึงการเลือกบัญชีและ fail-closed `USER_ACTION_REQUIRED` เท่านั้น ไม่ใช่ successful authentication จาก fully logged-out state การอ้างว่าผ่าน login โดยไม่มี authentication proof ภายนอกจะเป็นผลทดสอบที่ไม่จริง
+
 ## Install once in Chrome or Edge
 
 1. ดาวน์โหลด ZIP จาก <https://poc-after-sso-login-gemini.web.app/downloads/gemini-sso-launcher-extension-v0.4.8.zip> และแตกไฟล์
