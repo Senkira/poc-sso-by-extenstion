@@ -35,7 +35,7 @@ const chrome = {
   },
   runtime: {
     id: EXTENSION_ID,
-    getManifest() { return { version: "0.4.7" }; },
+    getManifest() { return { version: "0.4.8" }; },
     onMessageExternal: event("external"),
     onMessage: event("internal")
   },
@@ -340,8 +340,8 @@ async function main() {
   assert.equal(status.run.stage, "AUTH_PENDING");
   store[`run:${requestId}`].nextAuthCheckAt = Date.now() - 1;
   status = await external({ type: "GET_STATUS", version: 3, requestId });
-  assert.equal(status.run.stage, "AUTH_TIMEOUT");
-  assert.match(status.run.note, /indeterminate/);
+  assert.equal(status.run.stage, "USER_ACTION_REQUIRED");
+  assert.match(status.run.note, /No browser-managed credential/);
 
   store[`run:${requestId}`].stage = "BROWSER_CREDENTIAL_SUBMIT_REQUESTED";
   store[`run:${requestId}`].authAttemptAt = Date.now() - 5000;

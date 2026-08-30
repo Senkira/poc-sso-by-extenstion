@@ -404,8 +404,8 @@ async function refreshPendingAuthentication(run) {
         current.nextAuthCheckAt = Date.now() + AUTH_PENDING_RECHECK_MS;
         current.note = "Google is still processing browser-managed authentication; no user action is requested yet.";
       } else {
-        current.stage = "AUTH_TIMEOUT";
-        current.note = "Google remained in a processing state beyond the bounded observation window; authentication outcome is indeterminate.";
+        current.stage = "USER_ACTION_REQUIRED";
+        current.note = "No browser-managed credential or silent SSO completed authentication within the bounded observation window.";
       }
     } else if (outcome === "AUTH_PAGE_CHANGED") {
       current.stage = "AUTH_TRANSITION_OBSERVED";
