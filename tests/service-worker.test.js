@@ -20,6 +20,7 @@ const pocIdToken = "test-id-token".padEnd(120, "x");
 const sessionState = {};
 let sessionStorageWrites = 0;
 let currentFrame = { documentId: "about-doc", url: "about:blank" };
+const tabFrames = new Map();
 let existingWindows = [];
 let failNextTabUpdate = false;
 
@@ -34,7 +35,7 @@ const chrome = {
     isAllowedIncognitoAccess(callback) { callback(true); }
   },
   runtime: {
-    getManifest() { return { version: "0.11.0" }; },
+    getManifest() { return { version: "0.12.0" }; },
     async sendNativeMessage(host, message) {
       nativeMessages.push({ host, message });
       assert.equal(message.version, 9);
@@ -81,14 +82,18 @@ const chrome = {
     }
   },
   webNavigation: {
-    async getFrame() { return { ...currentFrame }; },
+    async getFrame({ tabId }) {
+      return { ...(tabId === 81 ? currentFrame : tabFrames.get(tabId) || currentFrame) };
+    },
     onCompleted: event("completed"),
     onCommitted: event("committed")
   },
   tabs: {
     async create(options) {
       createdTabs.push(options);
-      return { id: 82 + createdTabs.length - 1, incognito: true, ...options };
+      const id = 82 + createdTabs.length - 1;
+      tabFrames.set(id, { documentId: `${id}-about-doc`, url: options.url });
+      return { id, incognito: true, ...options };
     },
     async update(id, options) {
       updatedTabs.push({ id, options });
@@ -96,11 +101,17 @@ const chrome = {
         failNextTabUpdate = false;
         throw new Error("simulated navigation failure");
       }
+      if (typeof options.url === "string" && id !== 81) {
+        tabFrames.set(id, { documentId: `${id}-navigation-doc`, url: options.url });
+      }
       return { id, incognito: true, ...options };
     },
     async reload(id) { reloadedTabs.push(id); },
     async remove(id) { removedTabs.push(id); },
-    async get(id) { return { id, incognito: true, url: currentFrame.url }; },
+    async get(id) {
+      const frame = id === 81 ? currentFrame : tabFrames.get(id) || currentFrame;
+      return { id, incognito: true, url: frame.url };
+    },
     onRemoved: event("removed")
   }
 };
@@ -150,7 +161,7 @@ async function flush(rounds = 8) {
 
 async function main() {
   const ping = await external({ type: "PING", version: 9 });
-  assert.equal(ping.version, "0.11.0");
+  assert.equal(ping.version, "0.12.0");
   assert.equal(ping.protocolVersion, 9);
   assert.equal(ping.capability, "EXTENSION_AGENT_ONE_SHOT_BRIDGE");
   assert.equal(ping.incognitoAccessAllowed, true);
@@ -175,12 +186,9 @@ async function main() {
   assert.equal(createdWindows[0].focused, false);
   assert.equal(createdWindows[0].state, "minimized");
   assert.equal(createdWindows[0].url, "about:blank");
-  assert.equal(createdTabs.length, 1);
-  assert.equal(createdTabs[0].windowId, 71);
-  assert.equal(createdTabs[0].url, "https://poc-after-sso-login-gemini.web.app/loading.html");
-  assert.equal(createdTabs[0].active, true);
+  assert.equal(createdTabs.length, 0);
   assert.match(updatedTabs[0].options.url, /accounts\.google\.com/);
-  assert.equal(updatedTabs[0].options.active, false);
+  assert.equal(updatedTabs[0].options.active, true);
   assert.equal(sessionStorageWrites > 0, true);
 
   const parallel = await external({
@@ -205,16 +213,47 @@ async function main() {
   });
   await flush();
   let status = await external({ type: "GET_STATUS", version: 9, requestId });
-  assert.equal(status.run.stage, "PASSWORD_SUBMITTED");
   assert.equal(status.run.credentialDelivered, true);
+  assert.equal(status.run.authTabId, 81);
+  assert.equal(status.run.geminiTabId, 82);
+  assert.equal(createdTabs.length, 1);
+  assert.equal(createdTabs[0].windowId, 71);
+  assert.equal(createdTabs[0].url, "about:blank");
+  assert.equal(createdTabs[0].active, true);
+  assert.equal(updatedTabs.some(({ id, options }) => id === 82
+    && options.url === "https://gemini.google.com/app"
+    && options.active === true), true);
   assert.equal(Object.prototype.hasOwnProperty.call(status.run, "password"), false);
   assert.equal(nativeMessages.length, 2);
   assert.equal(nativeMessages[1].host, "com.senkira.gemini_extension_agent");
   assert.equal(nativeMessages[1].message.action, "getGoogleCredential");
   assert.equal(createdAlarms[0].name, `gemini-auth-timeout:${requestId}`);
 
+  const preAuthGeminiFrame = { documentId: "gemini-pre-auth-doc", url: "https://gemini.google.com/app" };
+  tabFrames.set(82, preAuthGeminiFrame);
+  listeners.committed({ frameId: 0, tabId: 82, ...preAuthGeminiFrame });
+  await flush();
+  const waitingSignal = await internal(
+    { type: "GEMINI_DOCUMENT_SIGNAL", version: 9, targetAccountObserved: false, identityCheckComplete: true },
+    {
+      frameId: 0,
+      documentId: preAuthGeminiFrame.documentId,
+      url: preAuthGeminiFrame.url,
+      tab: { id: 82, incognito: true }
+    }
+  );
+  assert.equal(waitingSignal.waiting, true);
+  status = await external({ type: "GET_STATUS", version: 9, requestId });
+  assert.equal(status.run.closed, false);
+  assert.equal(removedWindows.length, 0);
+
+  currentFrame = { documentId: "auth-finished-doc", url: "https://gemini.google.com/app" };
+  listeners.completed({ frameId: 0, tabId: 81, documentId: currentFrame.documentId, url: currentFrame.url });
+  await flush();
+
   currentFrame = { documentId: "gemini-doc-before-reload", url: "https://gemini.google.com/app" };
-  listeners.committed({ frameId: 0, tabId: 81, documentId: currentFrame.documentId, url: currentFrame.url });
+  tabFrames.set(82, currentFrame);
+  listeners.committed({ frameId: 0, tabId: 82, documentId: currentFrame.documentId, url: currentFrame.url });
   await flush();
   const reloadSignal = await internal(
     { type: "GEMINI_DOCUMENT_SIGNAL", version: 9, targetAccountObserved: true, identityCheckComplete: true },
@@ -222,19 +261,20 @@ async function main() {
       frameId: 0,
       documentId: currentFrame.documentId,
       url: currentFrame.url,
-      tab: { id: 81, incognito: true }
+      tab: { id: 82, incognito: true }
     }
   );
   assert.equal(reloadSignal.reloading, true);
   status = await external({ type: "GET_STATUS", version: 9, requestId });
   assert.equal(status.run.stage, "RELOADING_GEMINI");
   assert.equal(status.run.targetAccountConfirmed, false);
-  assert.deepEqual(reloadedTabs, [81]);
+  assert.deepEqual(reloadedTabs, [82]);
   assert.equal(updatedWindows.length, 0);
   assert.equal(removedTabs.length, 0);
 
   currentFrame = { documentId: "gemini-doc-after-reload", url: "https://gemini.google.com/app" };
-  listeners.committed({ frameId: 0, tabId: 81, documentId: currentFrame.documentId, url: currentFrame.url });
+  tabFrames.set(82, currentFrame);
+  listeners.committed({ frameId: 0, tabId: 82, documentId: currentFrame.documentId, url: currentFrame.url });
   await flush();
   const finalSignal = await internal(
     { type: "GEMINI_DOCUMENT_SIGNAL", version: 9, targetAccountObserved: true, identityCheckComplete: true },
@@ -242,16 +282,18 @@ async function main() {
       frameId: 0,
       documentId: currentFrame.documentId,
       url: currentFrame.url,
-      tab: { id: 81, incognito: true }
+      tab: { id: 82, incognito: true }
     }
   );
   assert.equal(finalSignal.confirmed, true);
   status = await external({ type: "GET_STATUS", version: 9, requestId });
   assert.equal(status.run.stage, "GEMINI_TARGET_ACCOUNT_CONFIRMED");
   assert.equal(status.run.targetAccountConfirmed, true);
-  assert.equal(status.run.coverTabId, null);
-  assert.deepEqual(removedTabs, [82]);
-  assert.equal(updatedTabs.at(-1).id, 81);
+  assert.equal(status.run.authTabId, null);
+  assert.equal(status.run.geminiTabId, 82);
+  assert.equal(status.run.tabId, 82);
+  assert.deepEqual(removedTabs, [81]);
+  assert.equal(updatedTabs.at(-1).id, 82);
   assert.equal(updatedTabs.at(-1).options.active, true);
   assert.equal(updatedWindows[0].id, 71);
   assert.equal(updatedWindows[0].options.state, "normal");
@@ -340,7 +382,8 @@ async function main() {
   assert.equal(recoveryStarted.ok, true);
   currentFrame = { documentId: "missed-google-doc", url: "https://accounts.google.com/v3/signin/challenge/pwd" };
   const recovered = await external({ type: "GET_STATUS", version: 9, requestId: recoveryId });
-  assert.equal(recovered.run.stage, "PASSWORD_SUBMITTED");
+  assert.equal(recovered.run.stage, "GEMINI_TAB_OPENED");
+  assert.equal(Number.isInteger(recovered.run.geminiTabId), true);
   await external({ type: "CANCEL_RUN", version: 9, requestId: recoveryId, pocIdToken });
 
   const atomicId = "123e4567-e89b-42d3-a456-426614174005";
@@ -387,7 +430,8 @@ async function main() {
   console.log("PASS partial-window-open-failure-cleans-up-and-releases-run");
   console.log("PASS concurrent-start-agent-is-serialized");
   console.log("PASS prompt-success-requires-rendered-user-turn-postcondition");
-  console.log("PASS cover-tab-reload-and-single-gemini-handoff");
+  console.log("PASS isolated-new-gemini-tab-reload-and-single-tab-handoff");
+  console.log("PASS pre-auth-gemini-miss-waits-instead-of-closing-isolate");
   console.log("PASS terminal-failure-stage-survives-tab-close");
 }
 

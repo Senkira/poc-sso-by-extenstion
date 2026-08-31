@@ -4,7 +4,7 @@ const PROTOCOL_VERSION = 9;
 const ALLOWED_ORIGIN = "https://poc-after-sso-login-gemini.web.app";
 const TARGET_EMAIL = "codeassist.04@easybuy.co.th";
 const LOGIN_URL = "https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fgemini.google.com%2Fapp&followup=https%3A%2F%2Fgemini.google.com%2Fapp";
-const COVER_URL = "https://poc-after-sso-login-gemini.web.app/loading.html";
+const GEMINI_URL = "https://gemini.google.com/app";
 const NATIVE_HOST = "com.senkira.gemini_extension_agent";
 const FIREBASE_API_KEY = "AIzaSyBAmRwEIELh_AA7E1omzf8TrVV3Cp4HPFc";
 const POC_AUTH_EMAIL = "o1234567@poc.invalid";
@@ -68,7 +68,8 @@ function publicRun(run) {
     updatedAt: run.updatedAt,
     windowId: Number.isInteger(run.windowId) ? run.windowId : null,
     tabId: Number.isInteger(run.tabId) ? run.tabId : null,
-    coverTabId: Number.isInteger(run.coverTabId) ? run.coverTabId : null,
+    authTabId: Number.isInteger(run.authTabId) ? run.authTabId : null,
+    geminiTabId: Number.isInteger(run.geminiTabId) ? run.geminiTabId : null,
     incognito: run.incognito === true,
     observedOrigin: run.observedOrigin || null,
     targetAccountConfirmed: run.targetAccountConfirmed === true,
@@ -85,9 +86,13 @@ function persistedRun(run) {
     ...publicRun(run),
     pocUid: typeof run.pocUid === "string" ? run.pocUid : null,
     currentDocumentId: typeof run.currentDocumentId === "string" ? run.currentDocumentId : null,
+    geminiDocumentId: typeof run.geminiDocumentId === "string" ? run.geminiDocumentId : null,
     confirmedDocumentId: typeof run.confirmedDocumentId === "string" ? run.confirmedDocumentId : null,
     currentUrl: typeof run.currentUrl === "string" ? run.currentUrl : null,
-    geminiReloaded: run.geminiReloaded === true
+    geminiCurrentUrl: typeof run.geminiCurrentUrl === "string" ? run.geminiCurrentUrl : null,
+    geminiReloaded: run.geminiReloaded === true,
+    googleSessionEstablished: run.googleSessionEstablished === true,
+    geminiReadyForIdentityFailure: run.geminiReadyForIdentityFailure === true
   };
 }
 
@@ -113,7 +118,10 @@ async function hydrateState() {
       updatedAt: Number.isFinite(saved.updatedAt) ? saved.updatedAt : saved.createdAt,
       windowId: Number.isInteger(saved.windowId) ? saved.windowId : null,
       tabId: Number.isInteger(saved.tabId) ? saved.tabId : null,
-      coverTabId: Number.isInteger(saved.coverTabId) ? saved.coverTabId : null,
+      authTabId: Number.isInteger(saved.authTabId)
+        ? saved.authTabId
+        : Number.isInteger(saved.tabId) ? saved.tabId : null,
+      geminiTabId: Number.isInteger(saved.geminiTabId) ? saved.geminiTabId : null,
       incognito: saved.incognito === true,
       observedOrigin: typeof saved.observedOrigin === "string" ? saved.observedOrigin : null,
       targetAccountConfirmed: saved.targetAccountConfirmed === true,
@@ -124,15 +132,22 @@ async function hydrateState() {
         : saved.credentialDelivered === true ? "CONSUMED" : "NOT_REQUESTED",
       pocUid: saved.pocUid,
       currentDocumentId: typeof saved.currentDocumentId === "string" ? saved.currentDocumentId : null,
+      geminiDocumentId: typeof saved.geminiDocumentId === "string" ? saved.geminiDocumentId : null,
       confirmedDocumentId: typeof saved.confirmedDocumentId === "string" ? saved.confirmedDocumentId : null,
       currentUrl: typeof saved.currentUrl === "string" ? saved.currentUrl : null,
+      geminiCurrentUrl: typeof saved.geminiCurrentUrl === "string" ? saved.geminiCurrentUrl : null,
       geminiReloaded: saved.geminiReloaded === true,
+      googleSessionEstablished: saved.googleSessionEstablished === true,
+      geminiReadyForIdentityFailure: saved.geminiReadyForIdentityFailure === true,
       closed: saved.closed === true,
       note: typeof saved.note === "string" ? saved.note : null
     };
     runs.set(run.requestId, run);
     if (!run.closed && Number.isInteger(run.tabId)) {
       tabToRequest.set(run.tabId, run.requestId);
+    }
+    if (!run.closed && Number.isInteger(run.geminiTabId)) {
+      tabToRequest.set(run.geminiTabId, run.requestId);
     }
   }
 }
@@ -171,6 +186,9 @@ function getRun(requestId) {
     if (Number.isInteger(run.tabId)) {
       tabToRequest.delete(run.tabId);
     }
+    if (Number.isInteger(run.geminiTabId)) {
+      tabToRequest.delete(run.geminiTabId);
+    }
     void persistState();
     return null;
   }
@@ -184,6 +202,9 @@ function purgeExpiredRuns() {
     runs.delete(requestId);
     if (Number.isInteger(run.tabId)) {
       tabToRequest.delete(run.tabId);
+    }
+    if (Number.isInteger(run.geminiTabId)) {
+      tabToRequest.delete(run.geminiTabId);
     }
     changed = true;
   }
@@ -329,11 +350,16 @@ async function startAgentUnlocked(message) {
     credentialDelivered: false,
     credentialState: "NOT_REQUESTED",
     pocUid,
-    coverTabId: null,
+    authTabId: null,
+    geminiTabId: null,
     currentDocumentId: null,
+    geminiDocumentId: null,
     confirmedDocumentId: null,
     currentUrl: "about:blank",
+    geminiCurrentUrl: null,
     geminiReloaded: false,
+    googleSessionEstablished: false,
+    geminiReadyForIdentityFailure: false,
     closed: false,
     note: "Starting the extension agent in a minimized InPrivate window."
   };
@@ -354,22 +380,14 @@ async function startAgentUnlocked(message) {
     }
     run.windowId = createdWindow.id;
     run.tabId = tab.id;
+    run.authTabId = tab.id;
     tabToRequest.set(tab.id, run.requestId);
-    const coverTab = await chrome.tabs.create({
-      windowId: createdWindow.id,
-      url: COVER_URL,
-      active: true
-    });
-    if (!Number.isInteger(coverTab?.id)) {
-      throw new Error("Browser did not return the isolated cover tab.");
-    }
-    run.coverTabId = coverTab.id;
     updateRun(run, {
       stage: "ISOLATED_WINDOW_CREATED",
-      note: "A cover tab is active while Google authentication runs in the background."
+      note: "The isolated Google tab is ready for background authentication."
     });
     await persistState();
-    await chrome.tabs.update(tab.id, { url: LOGIN_URL, active: false });
+    await chrome.tabs.update(tab.id, { url: LOGIN_URL, active: true });
     updateRun(run, {
       stage: "NAVIGATING_TO_GOOGLE",
       note: "The isolated tab is mapped before Google navigation begins."
@@ -384,6 +402,9 @@ async function startAgentUnlocked(message) {
     });
     if (Number.isInteger(run.tabId)) {
       tabToRequest.delete(run.tabId);
+    }
+    if (Number.isInteger(run.geminiTabId)) {
+      tabToRequest.delete(run.geminiTabId);
     }
     const failedWindowId = Number.isInteger(run.windowId)
       ? run.windowId
@@ -533,14 +554,40 @@ async function closeFailedWindow(run) {
 async function failRun(run, stage, note) {
   updateRun(run, { stage, note, identityCheckComplete: true, closed: true });
   await chrome.alarms.clear(authAlarmName(run.requestId)).catch(() => {});
-  if (Number.isInteger(run.tabId) && typeof run.currentDocumentId === "string") {
+  if (Number.isInteger(run.authTabId) && typeof run.currentDocumentId === "string") {
     await withTimeout(chrome.scripting.executeScript({
-      target: { tabId: run.tabId, documentIds: [run.currentDocumentId] },
+      target: { tabId: run.authTabId, documentIds: [run.currentDocumentId] },
       func: clearPasswordInput
     }), 2000, "PASSWORD_CLEAR_TIMEOUT").catch(() => {});
   }
   await closeFailedWindow(run);
   await persistState().catch(() => {});
+}
+
+async function openIsolatedGeminiTab(run) {
+  if (Number.isInteger(run.geminiTabId)) return;
+  updateRun(run, {
+    stage: "OPENING_ISOLATED_GEMINI_TAB",
+    note: "Opening Gemini in a new tab inside the same isolated window."
+  });
+  await persistState();
+  const geminiTab = await chrome.tabs.create({
+    windowId: run.windowId,
+    url: "about:blank",
+    active: true
+  });
+  if (!Number.isInteger(geminiTab?.id)) {
+    throw new Error("GEMINI_TAB_OPEN_FAILED");
+  }
+  run.geminiTabId = geminiTab.id;
+  tabToRequest.set(geminiTab.id, run.requestId);
+  await persistState();
+  await chrome.tabs.update(geminiTab.id, { url: GEMINI_URL, active: true });
+  updateRun(run, {
+    stage: "GEMINI_TAB_OPENED",
+    note: "Gemini is loading in the active isolated tab while Google finishes in the background."
+  });
+  await persistState();
 }
 
 async function automateGoogle(run, tabId, documentId) {
@@ -553,7 +600,7 @@ async function automateGoogle(run, tabId, documentId) {
   if (existing) return existing;
   const operation = (async () => {
     for (let attempt = 0; attempt < AUTOMATION_RETRY_LIMIT; attempt += 1) {
-      if (run.closed || run.tabId !== tabId || run.currentDocumentId !== documentId) return;
+      if (run.closed || run.authTabId !== tabId || run.currentDocumentId !== documentId) return;
       let result;
       try {
         const results = await withTimeout(chrome.scripting.executeScript({
@@ -637,6 +684,7 @@ async function automateGoogle(run, tabId, documentId) {
           });
           chrome.alarms.create(authAlarmName(run.requestId), { delayInMinutes: AUTH_TIMEOUT_MINUTES });
           await persistState();
+          await openIsolatedGeminiTab(run);
           return;
         }
         await failRun(run, passwordStep, "The exact Google password form could not be submitted safely.");
@@ -668,30 +716,65 @@ async function handleNavigation(details) {
   if (!run || run.closed) return;
   let url;
   try { url = new URL(details.url); } catch { return; }
-  if (run.currentDocumentId !== details.documentId) {
+  if (details.tabId === run.authTabId) {
     updateRun(run, {
       currentDocumentId: details.documentId,
       currentUrl: details.url,
-      observedOrigin: url.origin,
-      confirmedDocumentId: null,
-      targetAccountConfirmed: false,
-      identityCheckComplete: false
+      observedOrigin: url.origin
     });
-  } else {
-    updateRun(run, { currentUrl: details.url, observedOrigin: url.origin });
-  }
-  if (url.origin === "https://accounts.google.com") {
-    if (!(run.credentialState === "CONSUMED" && run.stage === "PASSWORD_SUBMITTED")) {
-      updateRun(run, { stage: "GOOGLE_LOGIN_PAGE", note: null });
+    if (url.origin === "https://accounts.google.com") {
+      if (run.credentialState === "CONSUMED") {
+        updateRun(run, {
+          stage: "GOOGLE_AUTH_CONTINUING",
+          note: "Google is finishing authentication in the background tab."
+        });
+      } else {
+        updateRun(run, { stage: "GOOGLE_LOGIN_PAGE", note: null });
+        await persistState();
+        await automateGoogle(run, details.tabId, details.documentId);
+      }
+    } else if (url.origin === "https://gemini.google.com" && !run.googleSessionEstablished) {
+      updateRun(run, run.geminiReloaded ? {
+        googleSessionEstablished: true
+      } : {
+        googleSessionEstablished: true,
+        geminiReadyForIdentityFailure: false,
+        stage: "GOOGLE_SESSION_ESTABLISHED",
+        note: "The isolated Google session is ready; refreshing the dedicated Gemini tab."
+      });
+      await persistState();
+      if (Number.isInteger(run.geminiTabId) && !run.geminiReloaded) {
+        await chrome.tabs.update(run.geminiTabId, { url: GEMINI_URL, active: true });
+      }
     }
-    await persistState();
-    await automateGoogle(run, details.tabId, details.documentId);
-  } else if (url.origin === "https://gemini.google.com") {
-    if (run.stage !== "RELOADING_GEMINI"
-        && !(run.confirmedDocumentId === details.documentId && run.targetAccountConfirmed)) {
+  } else if (details.tabId === run.geminiTabId) {
+    if (run.geminiDocumentId !== details.documentId) {
       updateRun(run, {
-        stage: "GEMINI_DOCUMENT_LOADING",
-        note: "Gemini loaded; waiting for exact account confirmation."
+        geminiDocumentId: details.documentId,
+        geminiCurrentUrl: details.url,
+        observedOrigin: url.origin,
+        confirmedDocumentId: null,
+        targetAccountConfirmed: false,
+        identityCheckComplete: false
+      });
+    } else {
+      updateRun(run, { geminiCurrentUrl: details.url, observedOrigin: url.origin });
+    }
+    if (url.origin === "https://gemini.google.com") {
+      if (run.googleSessionEstablished) {
+        updateRun(run, { geminiReadyForIdentityFailure: true });
+      }
+      if (run.stage !== "RELOADING_GEMINI"
+          && !(run.confirmedDocumentId === details.documentId && run.targetAccountConfirmed)) {
+        updateRun(run, {
+          stage: "GEMINI_DOCUMENT_LOADING",
+          note: "The dedicated isolated Gemini tab loaded; waiting for exact account confirmation."
+        });
+      }
+    } else if (url.origin === "https://accounts.google.com") {
+      updateRun(run, {
+        stage: "GEMINI_WAITING_FOR_GOOGLE_SESSION",
+        note: "The Gemini tab is waiting while authentication finishes in the background tab."
       });
     }
   }
@@ -699,23 +782,21 @@ async function handleNavigation(details) {
 }
 
 async function reconcileRunFrame(run) {
-  if (run.closed || !Number.isInteger(run.tabId)) return;
-  const tab = await chrome.tabs.get(run.tabId);
-  if (tab.incognito !== true) {
-    await failRun(run, "ISOLATION_LOST", "The owned tab is no longer InPrivate/Incognito.");
-    return;
+  if (run.closed) return;
+  const ownedTabIds = [...new Set([run.authTabId, run.geminiTabId].filter(Number.isInteger))];
+  for (const tabId of ownedTabIds) {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.incognito !== true) {
+      await failRun(run, "ISOLATION_LOST", "An owned tab is no longer InPrivate/Incognito.");
+      return;
+    }
+    const frame = await chrome.webNavigation.getFrame({ tabId, frameId: 0 });
+    if (!frame || typeof frame.documentId !== "string" || typeof frame.url !== "string") {
+      await failRun(run, "FRAME_UNAVAILABLE", "An owned top-level document could not be reconciled.");
+      return;
+    }
+    await handleNavigation({ frameId: 0, tabId, documentId: frame.documentId, url: frame.url });
   }
-  const frame = await chrome.webNavigation.getFrame({ tabId: run.tabId, frameId: 0 });
-  if (!frame || typeof frame.documentId !== "string" || typeof frame.url !== "string") {
-    await failRun(run, "FRAME_UNAVAILABLE", "The current top-level document could not be reconciled.");
-    return;
-  }
-  await handleNavigation({
-    frameId: 0,
-    tabId: run.tabId,
-    documentId: frame.documentId,
-    url: frame.url
-  });
 }
 
 function inspectGeminiActiveAccount(targetEmail) {
@@ -838,7 +919,7 @@ async function postPrompt(message) {
       || frameOrigin !== "https://gemini.google.com"
       || typeof run.confirmedDocumentId !== "string"
       || frame?.documentId !== run.confirmedDocumentId
-      || run.currentDocumentId !== run.confirmedDocumentId) {
+      || run.geminiDocumentId !== run.confirmedDocumentId) {
     await failRun(run, "GEMINI_CONTEXT_CHANGED", "Gemini navigated away from the confirmed account document.");
     return { ok: false, error: "GEMINI_CONTEXT_CHANGED", run: publicRun(run) };
   }
@@ -925,19 +1006,32 @@ async function handleCommitted(details) {
   if (!run || run.closed) return;
   try {
     const origin = new URL(details.url).origin;
-    updateRun(run, {
-      currentDocumentId: details.documentId,
-      confirmedDocumentId: null,
-      currentUrl: details.url,
-      observedOrigin: origin,
-      targetAccountConfirmed: false,
-      identityCheckComplete: false,
-      stage: origin === "https://gemini.google.com"
-        ? "GEMINI_DOCUMENT_LOADING"
-        : origin === "https://accounts.google.com"
+    if (details.tabId === run.authTabId) {
+      updateRun(run, {
+        currentDocumentId: details.documentId,
+        currentUrl: details.url,
+        observedOrigin: origin,
+        stage: origin === "https://accounts.google.com"
           ? run.credentialState === "CONSUMED" ? "GOOGLE_AUTH_CONTINUING" : "GOOGLE_DOCUMENT_COMMITTED"
-          : "NAVIGATION_COMMITTED"
-    });
+          : origin === "https://gemini.google.com" ? "GOOGLE_SESSION_ESTABLISHING" : "NAVIGATION_COMMITTED"
+      });
+    } else if (details.tabId === run.geminiTabId) {
+      updateRun(run, {
+        geminiDocumentId: details.documentId,
+        confirmedDocumentId: null,
+        geminiCurrentUrl: details.url,
+        observedOrigin: origin,
+        targetAccountConfirmed: false,
+        identityCheckComplete: false,
+        geminiReadyForIdentityFailure: origin === "https://gemini.google.com"
+          && run.googleSessionEstablished,
+        stage: origin === "https://gemini.google.com"
+          ? "GEMINI_DOCUMENT_LOADING"
+          : origin === "https://accounts.google.com"
+            ? "GEMINI_WAITING_FOR_GOOGLE_SESSION"
+            : "GEMINI_NAVIGATION_COMMITTED"
+      });
+    }
     await persistState();
   } catch { /* ignored */ }
 }
@@ -957,7 +1051,7 @@ async function handleInternalMessage(message, sender) {
   await ensureStateReady();
   const requestId = tabToRequest.get(sender.tab.id);
   const run = requestId ? getRun(requestId) : null;
-  if (!run || run.closed) {
+  if (!run || run.closed || sender.tab.id !== run.geminiTabId) {
     return { ok: false };
   }
   let origin;
@@ -968,7 +1062,7 @@ async function handleInternalMessage(message, sender) {
   const frame = await chrome.webNavigation.getFrame({ tabId: sender.tab.id, frameId: 0 }).catch(() => null);
   if (!frame
       || frame.documentId !== sender.documentId
-      || run.currentDocumentId !== sender.documentId
+      || run.geminiDocumentId !== sender.documentId
       || new URL(frame.url).origin !== "https://gemini.google.com") {
     return { ok: false, error: "STALE_GEMINI_DOCUMENT" };
   }
@@ -985,6 +1079,7 @@ async function handleInternalMessage(message, sender) {
       updateRun(run, {
         stage: "RELOADING_GEMINI",
         geminiReloaded: true,
+        geminiReadyForIdentityFailure: false,
         targetAccountConfirmed: false,
         identityCheckComplete: false,
         confirmedDocumentId: null,
@@ -1006,17 +1101,22 @@ async function handleInternalMessage(message, sender) {
       confirmedDocumentId: sender.documentId,
       note: "Gemini rendered the exact target account."
     });
-    if (Number.isInteger(run.coverTabId)) {
+    const finalGeminiTabId = run.geminiTabId;
+    if (Number.isInteger(run.authTabId) && run.authTabId !== finalGeminiTabId) {
+      const authTabId = run.authTabId;
+      tabToRequest.delete(authTabId);
       try {
-        await chrome.tabs.remove(run.coverTabId);
+        await chrome.tabs.remove(authTabId);
       } catch {
-        await failRun(run, "COVER_TAB_CLEANUP_FAILED", "The temporary cover tab could not be closed safely.");
-        return { ok: false, error: "COVER_TAB_CLEANUP_FAILED", confirmed: false, complete: true };
+        tabToRequest.set(authTabId, run.requestId);
+        await failRun(run, "AUTH_TAB_CLEANUP_FAILED", "The background Google tab could not be closed safely.");
+        return { ok: false, error: "AUTH_TAB_CLEANUP_FAILED", confirmed: false, complete: true };
       }
-      run.coverTabId = null;
+      run.authTabId = null;
     }
+    run.tabId = finalGeminiTabId;
     try {
-      await chrome.tabs.update(sender.tab.id, { active: true });
+      await chrome.tabs.update(finalGeminiTabId, { active: true });
     } catch {
       await failRun(run, "GEMINI_ACTIVATION_FAILED", "The confirmed Gemini tab could not be activated safely.");
       return { ok: false, error: "GEMINI_ACTIVATION_FAILED", confirmed: false, complete: true };
@@ -1025,7 +1125,15 @@ async function handleInternalMessage(message, sender) {
     await persistState();
     chrome.windows.update(run.windowId, { state: "normal", focused: true }).catch(() => {});
   } else if (message.identityCheckComplete && !run.targetAccountConfirmed) {
-    await failRun(run, "GEMINI_TARGET_ACCOUNT_NOT_CONFIRMED", "Gemini loaded with an unconfirmed account.");
+    if (!run.googleSessionEstablished || !run.geminiReadyForIdentityFailure) {
+      updateRun(run, {
+        stage: "GEMINI_WAITING_FOR_GOOGLE_SESSION",
+        note: "Gemini is waiting for the background Google session to finish."
+      });
+      await persistState();
+      return { ok: true, confirmed: false, complete: false, waiting: true };
+    }
+    await failRun(run, "GEMINI_TARGET_ACCOUNT_NOT_CONFIRMED", "Gemini loaded after authentication with an unconfirmed account.");
   }
   return { ok: true, confirmed: run.targetAccountConfirmed, complete: run.identityCheckComplete };
 }
