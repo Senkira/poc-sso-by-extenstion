@@ -4,22 +4,18 @@ Lean online POC ที่ให้ Firebase Hosting สั่ง Chrome/Edge ext
 
 Chrome และ Edge ใช้ extension package เดียวกัน เพราะใช้ Chromium Manifest V3 APIs ชุดเดียวกัน
 
-## Architecture ที่พิสูจน์ได้จริง
+## Acceptance ที่ต้องพิสูจน์
 
 ```text
-Firebase static site
-  -> fixed-ID MV3 extension
-  -> ephemeral Edge/Chrome InPrivate window
-  -> Google AccountChooser
-  -> extension เลือก codeassist.04@easybuy.co.th
-  -> browser password manager เป็นผู้ใส่ saved Google credential
-  -> Google เป็นผู้ authenticate และสร้าง InPrivate session ใหม่
-  -> extension ไม่แตะค่า credential และสังเกต navigation เท่านั้น
-  -> Gemini content script ตรวจ account controls ที่ render แล้ว
-  -> hosted page แสดง lifecycle และ target-account evidence
+1. ผู้ใช้เข้า Firebase POC และกด Login
+2. Extension เปิด isolated Edge/Chrome context
+3. ระบบ authenticate Google account เป้าหมายโดยผู้ใช้ไม่เห็น/ไม่กรอก Google password
+4. ผู้ใช้ส่ง prompt และใช้ Gemini ของบัญชีเป้าหมายได้
 ```
 
-ไม่มี SSO, local server, Node.js, PowerShell, custom protocol, Native Messaging, Functions หรือ Cloud Run ใน runtime ของเครื่องปลายทาง เครื่องปลายทางต้องมีเพียง Chrome หรือ Edge, saved credential ใน browser password manager และ extension ที่ติดตั้ง/อนุญาต InPrivate ครั้งเดียว
+ผล v0.5.0 **ยังไม่ผ่าน acceptance ข้อ 3-4** จึงห้ามเรียกว่า zero-touch login สำเร็จ สิ่งที่พิสูจน์แล้วคือ Firebase Hosting ติดต่อ fixed-ID extension ได้จริง, extension เปิด InPrivate ได้จริง, เลือก/กรอก email เป้าหมายได้จริง และรายงาน failure แบบ fail-closed เมื่อ Google ขอ credential หรือ challenge
+
+ข้อจำกัดที่ตั้งไว้คือไม่มี SSO, local server, Node.js, PowerShell, custom protocol, Native Messaging, Functions หรือ Cloud Run ใน runtime ของเครื่องปลายทาง และ extension ห้ามรับ/เก็บ/inject Google password ภายใต้ขอบเขตนี้ไม่มี credential authority ที่สามารถมอบหลักฐานยืนยันตัวตนให้ Google ได้ การกด Login บนเว็บ POC ไม่สามารถสร้าง Google session ได้เอง
 
 Isolation ใน POC นี้คือ **ephemeral InPrivate cookie/site-data store** ซึ่งถูกล้างเมื่อปิด InPrivate windows ทั้งหมด ไม่ใช่ persistent profile หรือ `--user-data-dir` เพราะ extension API ไม่มีความสามารถเลือกหรือสร้าง browser profile แบบนั้น
 
@@ -67,11 +63,13 @@ Live E2E บน Edge เมื่อวันที่ 2026-08-31 ยืนย�
 
 หลังติดตั้งแล้วให้ใช้งานจาก <https://poc-after-sso-login-gemini.web.app/> เท่านั้น Origin อื่นไม่สามารถส่งคำสั่งเข้า extension ได้
 
-## One-time provisioning ที่ทำให้ zero-touch เป็นไปได้
+## ผลการทดลอง one-time provisioning
 
-บันทึก credential ของบัญชีเป้าหมายใน Edge/Chrome Password Manager หนึ่งครั้งนอก extension และตั้ง policy/setting ให้ browser autofill ได้โดยไม่ถาม device confirmation ทุกครั้ง Password ต้องไม่อยู่ใน extension, Firebase, Git, message, status หรือ log
+ทดลองล็อกอินบัญชีเป้าหมายใน Edge profile ปกติสำเร็จแล้ว แต่ InPrivate ใหม่ยังหยุดที่ Google password challenge ดังนั้น normal-profile session หรือการมี saved credential อย่างเดียวไม่ใช่หลักฐานว่า isolated zero-touch flow ใช้งานได้
 
 POC ไม่ copy/post Google cookies จาก normal profile เข้า InPrivate เพราะ cookie คือ bearer credential การทำเช่นนั้นทำลาย isolation และไม่ใช่ supported Google sign-in flow
+
+รายละเอียดข้อสรุปและ solution boundary อยู่ที่ [ARCHITECTURE-DECISION.md](./ARCHITECTURE-DECISION.md)
 
 ## Verify
 
@@ -98,14 +96,14 @@ Firebase site กำหนดเป็น `poc-after-sso-login-gemini` และ
 npx --yes firebase-tools deploy --only hosting --project poc-after-sso-login-gemini
 ```
 
-## Acceptance test
+## Production evidence test
 
-1. บันทึก credential ของบัญชีเป้าหมายใน browser password manager แต่ปิด InPrivate windows ทั้งหมดเพื่อล้าง Google session เก่า
+1. ปิด InPrivate windows ทั้งหมดเพื่อล้าง Google session เก่า
 2. ติดตั้ง extension v0.5.0 จาก hosted ZIP และเปิด Allow in InPrivate หนึ่งครั้ง
 3. เปิด production Firebase URL และต้องเห็น `Connected`
 4. กดปุ่มหนึ่งครั้ง แล้วห้ามมี keyboard/mouse interaction หลังจากนั้น
 5. Browser ต้องเปิดหน้าต่าง InPrivate จริงและเริ่มโดยไม่มี Google web session จากรอบก่อน
-6. Extension ต้องเลือกบัญชี `codeassist.04@easybuy.co.th` เอง และ browser password manager ต้องเป็นผู้ supply credential
+6. Extension ต้องเลือกบัญชี `codeassist.04@easybuy.co.th` เอง แต่ห้ามนับ `EMAIL_SUBMITTED` ว่า login สำเร็จ
 7. ห้ามมี extension-owned credential page และห้ามมี password/cookie/token ใน extension messages/storage/logs
 8. ถ้า browser และ Google ยอม authenticate โดยไม่ขอ interaction ต้องไปถึง `GEMINI_TARGET_ACCOUNT_CONFIRMED`
 9. ถ้าไม่มี usable saved credential, มี MFA/CAPTCHA/device confirmation หรือยืนยันบัญชีไม่ได้ ต้องจบด้วยสถานะ fail-closed ที่ตรงเหตุการณ์

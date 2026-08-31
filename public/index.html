@@ -11,12 +11,12 @@
   <body>
     <main class="shell">
       <header>
-        <p class="eyebrow">ONLINE · EXTENSION ONLY · SECRETLESS</p>
-        <h1>เปิด Gemini ผ่าน browser authentication</h1>
+        <p class="eyebrow">ONLINE · EXTENSION ONLY · NEGATIVE POC</p>
+        <h1>ทดสอบขอบเขต zero-touch Gemini login</h1>
         <p class="lead">
           หน้า Firebase Hosting นี้ติดต่อ extension โดยตรง Extension เปิด Edge/Chrome InPrivate,
           เลือกบัญชีเป้าหมาย และติดตาม flow โดยไม่อ่าน รับ เก็บ หรือ inject รหัสผ่าน
-          การยืนยันตัวตนต้องมาจาก credential ที่บันทึกไว้ใน browser password manager
+          ผล production ล่าสุดหยุดที่ Google password challenge จึงยังไม่ใช่ successful zero-touch login
         </p>
       </header>
 
@@ -44,9 +44,10 @@
           <div><dt>Note</dt><dd id="note-value">—</dd></div>
         </dl>
         <p class="notice">
-          InPrivate เป็น isolation แบบชั่วคราว ไม่ใช่ persistent browser profile หาก browser ไม่มี saved credential
-          หรือ Google ขอ MFA/device confirmation ระบบต้องจบที่ <code>USER_ACTION_REQUIRED</code>
-          และจะไม่เปิดหน้ารับรหัสผ่านของ extension ผลสำเร็จจะนับเมื่อ Gemini แสดงบัญชีเป้าหมายใน account controls เท่านั้น
+          Acceptance จริงคือ กดจาก POC แล้วเข้า Gemini ของบัญชีเป้าหมายได้โดยผู้ใช้ไม่เห็น/ไม่กรอก Google password
+          แต่ static Hosting + extension ที่ไม่มี secret authority ไม่สามารถสร้าง Google authentication proof เองได้
+          หาก Google ขอ password, MFA หรือ device confirmation ระบบต้องจบ <code>USER_ACTION_REQUIRED</code>
+          ผลสำเร็จจะนับเมื่อ Gemini แสดงบัญชีเป้าหมายใน account controls เท่านั้น
         </p>
       </section>
 
