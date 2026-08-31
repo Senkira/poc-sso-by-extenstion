@@ -16,7 +16,6 @@ Production URL: <https://poc-after-sso-login-gemini.web.app/>
 8. Native host ยืนยัน POC/Firebase ซ้ำก่อนอ่าน `ESB.GeminiBroker.CodeAssist04` ส่งกลับหนึ่งครั้งและจบ process
 9. Extension ใช้ atomic `NOT_REQUESTED → REQUESTING → CONSUMED`, ส่ง credential เข้า exact password document, ล้าง reference และไม่ retry credential read
 10. หน้าต่าง Gemini ถูกแสดงเมื่อ service worker revalidate exact current document และ active-account control เดียวเป็น `codeassist.04@easybuy.co.th`
-11. ก่อน Post ทุกครั้ง Extension ตรวจ InPrivate tab/origin/document/account ซ้ำ แล้ว inject ไปยัง confirmed `documentId` เท่านั้น
 
 ถ้า Google ขอ MFA, CAPTCHA, passkey, device approval หรือหน้า password ไม่ผูกกับ target account ระบบปิด InPrivate window และรายงาน failure ไม่พยายาม bypass challenge
 
@@ -82,5 +81,4 @@ npx --yes firebase-tools deploy --only auth,hosting --project poc-after-sso-logi
 3. หลังคลิก Login ระบบต้องเริ่ม Gemini อัตโนมัติ และห้ามพิมพ์หรือคลิกใน Google login UI
 4. Runtime evidence ต้องแสดง credential delivered once และ `GEMINI_TARGET_ACCOUNT_CONFIRMED`
 5. Gemini account control ต้องยืนยัน target account จริง
-6. Post prompt แล้วตรวจว่า Gemini รับข้อความ
-7. ถ้ามี interactive Google challenge ต้องเป็น fail-closed ไม่ถือว่าผ่าน
+6. ถ้ามี interactive Google challenge ต้องเป็น fail-closed ไม่ถือว่าผ่าน

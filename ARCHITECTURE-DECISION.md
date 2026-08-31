@@ -6,7 +6,7 @@
 
 ใช้ Chromium MV3 Extension เป็น browser agent และใช้ Native Messaging host แบบ one-shot เป็นขอบเขตเดียวที่อ่าน POC และ Google credentials จาก Windows Credential Manager
 
-หน้า Firebase ติดต่อ Native Messaging host โดยตรงไม่ได้ หน้าเว็บติดต่อเฉพาะ Extension ผ่าน `externally_connectable`; Native Host เป็นผู้ยืนยัน POC กับ Firebase ส่วน Extension ตรวจ Firebase ID token, สร้าง InPrivate window, เรียก host, ควบคุม Google login document, ยืนยัน target account และ post prompt
+หน้า Firebase ติดต่อ Native Messaging host โดยตรงไม่ได้ หน้าเว็บติดต่อเฉพาะ Extension ผ่าน `externally_connectable`; Native Host เป็นผู้ยืนยัน POC กับ Firebase ส่วน Extension ตรวจ Firebase ID token, สร้าง InPrivate window, เรียก host, ควบคุม Google login document และยืนยัน target account
 
 ## เหตุผล
 
@@ -24,7 +24,7 @@ Native Messaging ให้คุณสมบัติที่ POC ต้อง�
 
 หน้า POC แสดง Employee ID `O1234567` แบบ read-only และไม่มี password field เมื่อผู้ใช้กด Login ครั้งเดียว Extension เรียก host; host อ่าน `ESB.GeminiBroker.Poc.O1234567`, ใช้ password กับ Firebase Email/Password Authentication, pin exact email และ immutable UID แล้วคืนเฉพาะ ID token ให้ Extension/หน้าเว็บแบบ session-scoped จากนั้นหน้าเว็บเริ่ม Gemini agent อัตโนมัติ
 
-Extension ไม่เชื่อ boolean จากหน้าเว็บ แต่ส่ง ID token ไป `accounts:lookup` และยอมเริ่ม Agent เฉพาะ Firebase user ที่กำหนด จากนั้น request ถูกผูกกับ random UUID, InPrivate tab และ Firebase UID เดียวกัน Prompt submission ต้องยืนยัน ID token ซ้ำ
+Extension ไม่เชื่อ boolean จากหน้าเว็บ แต่ส่ง ID token ไป `accounts:lookup` และยอมเริ่ม Agent เฉพาะ Firebase user ที่กำหนด จากนั้น request ถูกผูกกับ random UUID, InPrivate tab และ Firebase UID เดียวกัน
 
 MV3 service worker อาจถูก suspend/restart ระหว่าง navigation จึง persist เฉพาะ whitelisted non-secret run metadata (`requestId`, tab/window IDs, stages, Firebase UID และ timestamps) ใน `chrome.storage.session` ค่า Firebase ID token, POC credential และ Google credential ไม่ถูก persist และ session state ถูกล้างเมื่อ browser session จบ
 
@@ -53,7 +53,7 @@ Extension ขอ `incognito: spanning` และผู้ดูแลเปิ�
 
 นี่คือ isolated cookie/site-data context ไม่ใช่ Windows security sandbox และไม่ใช่ browser profile ใหม่ เมื่อปิด InPrivate windows ทั้งหมด cookie store ของ context นั้นต้องถูกล้าง
 
-ทุก navigation เก็บ current `documentId` ใน `chrome.storage.session`; `GET_STATUS` ใช้ `webNavigation.getFrame()` recover event ที่อาจพลาด Content signal, reveal และ prompt ถูก bind กับ current/confirmed `documentId` เดียวกัน
+ทุก navigation เก็บ current `documentId` ใน `chrome.storage.session`; `GET_STATUS` ใช้ `webNavigation.getFrame()` recover event ที่อาจพลาด และ reveal ถูก bind กับ current/confirmed `documentId` เดียวกัน
 
 ## Fail-closed cases
 

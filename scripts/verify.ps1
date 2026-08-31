@@ -30,7 +30,7 @@ if ($app -notmatch [regex]::Escape($expectedExtensionId)) { throw 'Hosted app ex
 if ($worker -notmatch 'sendNativeMessage\(NATIVE_HOST') { throw 'Worker does not use the native bridge.' }
 if ($worker -notmatch 'incognito: true' -or $worker -notmatch 'state: "minimized"') { throw 'Worker must hide the isolated login window.' }
 if ($worker -notmatch 'GEMINI_TARGET_ACCOUNT_CONFIRMED') { throw 'Exact account confirmation gate is missing.' }
-if ($worker -notmatch 'POST_PROMPT' -or $app -notmatch 'POST_PROMPT') { throw 'Prompt handoff is missing.' }
+if ($app -match 'POST_PROMPT' -or $html -match 'prompt-button|Gemini Prompt') { throw 'Hosted prompt controls must be absent.' }
 if ($app -match 'accounts:signInWithPassword' -or $html -match 'type=["'']password["'']') { throw 'Hosted POC exposes password authentication to the page.' }
 if ($app -notmatch 'AUTHENTICATE_POC' -or $app -notmatch 'pocIdToken') { throw 'Hosted POC does not delegate Firebase authentication to the extension.' }
 if ($html -notmatch 'value="O1234567"[^>]*readonly' -or $app -notmatch 'await launchGemini\(\)') { throw 'Single-click POC-to-Gemini flow is missing.' }
@@ -51,7 +51,7 @@ if ($firebase.hosting.site -ne 'poc-after-sso-login-gemini') { throw 'Wrong Fire
 if ($firebase.auth.providers.emailPassword -ne $true) { throw 'Firebase Email/Password authentication is not configured.' }
 if (($firebase.hosting.headers | ConvertTo-Json -Depth 20) -match 'identitytoolkit\.googleapis\.com') { throw 'Hosted page must not connect directly to Firebase password authentication.' }
 if ($firebase.hosting.PSObject.Properties.Name -contains 'functions') { throw 'Firebase Functions are outside this static POC.' }
-if ($html -notmatch '/app.js\?v=0\.10\.3' -or $html -notmatch '/styles.css\?v=0\.10\.3') { throw 'Hosted assets are not cache-busted.' }
+if ($html -notmatch '/app.js\?v=0\.10\.4' -or $html -notmatch '/styles.css\?v=0\.10\.4') { throw 'Hosted assets are not cache-busted.' }
 if ($worker -notmatch 'documentIds' -or $worker -notmatch 'webNavigation\.getFrame') { throw 'Exact-document reconciliation is missing.' }
 if ($worker -notmatch 'windows\.getAll' -or $worker -notmatch 'INCOGNITO_SESSION_NOT_FRESH') { throw 'Fresh InPrivate session gate is missing.' }
 if ($worker -notmatch 'credentialState' -or $worker -notmatch 'CREDENTIAL_ALREADY_CLAIMED') { throw 'Atomic one-shot credential state is missing.' }
@@ -107,7 +107,7 @@ Write-Output 'PASS one-shot-native-credential-bridge'
 Write-Output 'PASS no-password-in-source-or-extension-storage'
 Write-Output 'PASS hidden-inprivate-login-window'
 Write-Output 'PASS exact-account-confirmation-gate'
-Write-Output 'PASS prompt-handoff-after-confirmation'
+Write-Output 'PASS hosted-prompt-controls-removed'
 Write-Output 'PASS firebase-auth-gates-extension-agent'
 Write-Output 'PASS hosted-page-never-handles-password'
 Write-Output 'PASS single-click-poc-to-gemini-flow'

@@ -20,8 +20,8 @@ const selectors = [
   "#login-panel", "#launcher-panel", "#login-form", "#username",
   "#login-button", "#preflight-button", "#preflight-badge", "#preflight-detail",
   "#logout-button", "#login-error", "#connection-badge",
-  "#connection-detail", "#launch-button", "#retry-button", "#prompt",
-  "#prompt-button", "#request-value", "#stage-value", "#origin-value",
+  "#connection-detail", "#launch-button", "#retry-button",
+  "#request-value", "#stage-value", "#origin-value",
   "#credential-value", "#account-value", "#note-value", "#extension-id"
 ];
 const elements = new Map(selectors.map((selector) => [selector, element()]));
@@ -64,21 +64,6 @@ const chrome = {
           run: {
             requestId: message.requestId,
             stage: "GEMINI_TARGET_ACCOUNT_CONFIRMED",
-            observedOrigin: "https://gemini.google.com",
-            credentialDelivered: true,
-            targetAccountConfirmed: true,
-            identityCheckComplete: true,
-            closed: false
-          }
-        });
-        return;
-      }
-      if (message.type === "POST_PROMPT") {
-        callback({
-          ok: true,
-          run: {
-            requestId: message.requestId,
-            stage: "PROMPT_SUBMITTED_CONFIRMED",
             observedOrigin: "https://gemini.google.com",
             credentialDelivered: true,
             targetAccountConfirmed: true,
@@ -140,13 +125,6 @@ async function main() {
   assert.equal(elements.get("#connection-badge").textContent, "Connected");
   assert.equal(messages.some((message) => message.type === "START_AGENT"), true);
   assert.equal(elements.get("#account-value").textContent, "Confirmed");
-  assert.equal(elements.get("#prompt-button").disabled, false);
-
-  elements.get("#prompt").value = "POC test prompt";
-  elements.get("#prompt-button").listeners.click();
-  await flush();
-  assert.equal(messages.some((message) => message.type === "POST_PROMPT"), true);
-  assert.equal(elements.get("#prompt").value, "");
 
   elements.get("#logout-button").listeners.click();
   await flush();
@@ -154,11 +132,9 @@ async function main() {
   assert.equal(stored.has("poc-firebase-id-token"), false);
   assert.equal(elements.get("#login-panel").hidden, false);
   assert.equal(elements.get("#launcher-panel").hidden, true);
-  assert.equal(elements.get("#prompt").disabled, true);
-  assert.equal(elements.get("#prompt-button").disabled, true);
 
   console.log("PASS firebase-login-runs-through-extension-native-bridge");
-  console.log("PASS firebase-token-gates-extension-start-and-prompt");
+  console.log("PASS firebase-token-gates-extension-start");
   console.log("PASS hosted-page-has-no-password-field");
   console.log("PASS single-login-click-starts-gemini-agent");
   console.log("PASS poc-logout-clears-session-token");

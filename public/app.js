@@ -45,8 +45,6 @@ const elements = {
   connectionDetail: document.querySelector("#connection-detail"),
   launchButton: document.querySelector("#launch-button"),
   retryButton: document.querySelector("#retry-button"),
-  prompt: document.querySelector("#prompt"),
-  promptButton: document.querySelector("#prompt-button"),
   requestValue: document.querySelector("#request-value"),
   stageValue: document.querySelector("#stage-value"),
   originValue: document.querySelector("#origin-value"),
@@ -109,11 +107,6 @@ function showAuthenticatedState(checkConnection = true) {
   const loggedIn = authState !== null && authState.expiresAt > Date.now();
   elements.loginPanel.hidden = loggedIn;
   elements.launcherPanel.hidden = !loggedIn;
-  if (!loggedIn) {
-    elements.prompt.value = "";
-    elements.prompt.disabled = true;
-    elements.promptButton.disabled = true;
-  }
   if (loggedIn && checkConnection) {
     void checkExtension();
   }
@@ -192,9 +185,6 @@ function renderRun(run) {
     ? "Confirmed"
     : run.identityCheckComplete ? "Not confirmed" : "Pending";
   elements.noteValue.textContent = run.note || "—";
-  const ready = run.stage === "GEMINI_TARGET_ACCOUNT_CONFIRMED" && run.targetAccountConfirmed;
-  elements.prompt.disabled = !ready;
-  elements.promptButton.disabled = !ready;
 }
 
 function renderUnavailable(stage) {
@@ -306,32 +296,10 @@ async function launchGemini() {
   }
 }
 
-async function submitPrompt() {
-  if (!activeRun || !elements.prompt.value.trim()) return;
-  let pocIdToken;
-  try {
-    pocIdToken = getPocIdToken();
-  } catch {
-    return;
-  }
-  elements.promptButton.disabled = true;
-  const response = await sendToExtension({
-    type: "POST_PROMPT",
-    version: PROTOCOL_VERSION,
-    requestId: activeRun.requestId,
-    pocIdToken,
-    prompt: elements.prompt.value.trim()
-  }).catch(() => ({ ok: false, error: "CHANNEL_UNAVAILABLE" }));
-  if (response?.run) renderRun(response.run);
-  if (response?.ok) elements.prompt.value = "";
-  else elements.noteValue.textContent = response?.error || "PROMPT_SUBMIT_FAILED";
-}
-
 elements.loginForm.addEventListener("submit", (event) => { void handleLogin(event); });
 elements.preflightButton.addEventListener("click", () => { void checkExtension(); });
 elements.logoutButton.addEventListener("click", () => { void handleLogout(); });
 elements.launchButton.addEventListener("click", () => { void launchGemini(); });
 elements.retryButton.addEventListener("click", () => { void checkExtension(); });
-elements.promptButton.addEventListener("click", () => { void submitPrompt(); });
 showAuthenticatedState();
 if (authState === null) void checkExtension();
