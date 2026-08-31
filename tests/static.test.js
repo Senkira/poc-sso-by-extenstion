@@ -27,6 +27,8 @@ assert.doesNotMatch(app, /LOGIN_DIGEST|crypto\.subtle/);
 assert.match(html, /POC login/);
 assert.match(html, /isolated session/);
 assert.match(html, /value="O1234567"[^>]*readonly/);
+assert.match(html, /<\/section>\s*<section class="card" aria-labelledby="prompt-title">/);
+assert.match(app, /elements\.prompt\.disabled = true/);
 assert.match(worker, /incognito: true/);
 assert.match(worker, /state: "minimized"/);
 assert.match(worker, /accounts:lookup/);

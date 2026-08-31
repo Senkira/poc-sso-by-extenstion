@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light dark">
     <title>Gemini Extension Agent POC</title>
-    <link rel="stylesheet" href="/styles.css?v=0.10.1">
-    <script src="/app.js?v=0.10.1" defer></script>
+    <link rel="stylesheet" href="/styles.css?v=0.10.2">
+    <script src="/app.js?v=0.10.2" defer></script>
   </head>
   <body>
     <main class="shell">
@@ -71,13 +71,6 @@
           </p>
         </section>
 
-        <section class="card" aria-labelledby="prompt-title">
-          <h2 id="prompt-title">ส่งข้อความไป Gemini</h2>
-          <label for="prompt">Prompt</label>
-          <textarea id="prompt" rows="4" maxlength="4000" disabled></textarea>
-          <button id="prompt-button" type="button" disabled>Post to Gemini</button>
-        </section>
-
         <details class="card">
           <summary>ติดตั้งครั้งเดียว</summary>
           <ol>
@@ -88,6 +81,14 @@
           </ol>
           <p>Extension ID: <code id="extension-id"></code></p>
         </details>
+      </section>
+
+      <section class="card" aria-labelledby="prompt-title">
+        <h2 id="prompt-title">ส่งข้อความไป Gemini</h2>
+        <label for="prompt">Prompt</label>
+        <textarea id="prompt" rows="4" maxlength="4000" disabled></textarea>
+        <button id="prompt-button" type="button" disabled>Post to Gemini</button>
+        <p class="notice">เปิดใช้งานเมื่อ Extension ยืนยันว่าหน้า Gemini เป็นบัญชีเป้าหมายที่ถูกต้องแล้วเท่านั้น</p>
       </section>
     </main>
     <footer>Firebase Hosting · Chromium MV3 · Static hosting only · No idle compute</footer>

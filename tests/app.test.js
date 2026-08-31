@@ -154,6 +154,8 @@ async function main() {
   assert.equal(stored.has("poc-firebase-id-token"), false);
   assert.equal(elements.get("#login-panel").hidden, false);
   assert.equal(elements.get("#launcher-panel").hidden, true);
+  assert.equal(elements.get("#prompt").disabled, true);
+  assert.equal(elements.get("#prompt-button").disabled, true);
 
   console.log("PASS firebase-login-runs-through-extension-native-bridge");
   console.log("PASS firebase-token-gates-extension-start-and-prompt");

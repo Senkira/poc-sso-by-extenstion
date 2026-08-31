@@ -109,6 +109,11 @@ function showAuthenticatedState(checkConnection = true) {
   const loggedIn = authState !== null && authState.expiresAt > Date.now();
   elements.loginPanel.hidden = loggedIn;
   elements.launcherPanel.hidden = !loggedIn;
+  if (!loggedIn) {
+    elements.prompt.value = "";
+    elements.prompt.disabled = true;
+    elements.promptButton.disabled = true;
+  }
   if (loggedIn && checkConnection) {
     void checkExtension();
   }
