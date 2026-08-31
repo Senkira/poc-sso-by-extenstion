@@ -26,7 +26,7 @@ Production URL: <https://poc-after-sso-login-gemini.web.app/>
 
 Runtime บนเครื่องปลายทางใช้ Edge/Chrome, Extension, PowerShell/.NET ที่มากับ Windows และ Windows Credential Manager ไม่ต้องติดตั้ง Node.js
 
-1. ดาวน์โหลด `gemini-extension-agent-poc-v0.9.1.zip` จากหน้า Production แล้วแตกไฟล์
+1. ดาวน์โหลด `gemini-extension-agent-poc-v0.9.2.zip` จากหน้า Production แล้วแตกไฟล์
 2. เปิด `edge://extensions` หรือ `chrome://extensions`
 3. เปิด Developer mode แล้ว Load unpacked จากโฟลเดอร์ `extension`
 4. เปิด Details ของ Extension และเปิด Allow in InPrivate/Incognito หนึ่งครั้ง

@@ -44,7 +44,7 @@ const chrome = {
       if (message.type === "PING") {
         callback({
           ok: true,
-          version: "0.9.1",
+          version: "0.9.2",
           protocolVersion: 9,
           capability: "EXTENSION_AGENT_ONE_SHOT_BRIDGE",
           incognitoAccessAllowed: true
@@ -124,8 +124,8 @@ async function flush(rounds = 6) {
 async function main() {
   assert.equal(elements.get("#login-panel").hidden, false);
   assert.equal(elements.get("#launcher-panel").hidden, true);
+  assert.equal(elements.get("#username").value, "O1234567");
 
-  elements.get("#username").value = "O1234567";
   elements.get("#login-form").listeners.submit({ preventDefault() {} });
   await flush();
 
@@ -157,6 +157,7 @@ async function main() {
   console.log("PASS single-login-click-starts-gemini-agent");
   console.log("PASS poc-logout-clears-session-token");
   console.log("PASS poc-logout-cancels-owned-window");
+  console.log("PASS readonly-username-restored-on-page-load");
 }
 
 main().catch((error) => {
