@@ -1,13 +1,14 @@
 "use strict";
 
 const EXTENSION_ID = "jeenmgigpkffleijbmfciffiodlcdafh";
-const REQUIRED_EXTENSION_VERSION = "0.4.8";
-const PROTOCOL_VERSION = 3;
+const REQUIRED_EXTENSION_VERSION = "0.5.0";
+const PROTOCOL_VERSION = 4;
 const POLL_INTERVAL_MS = 1000;
 const POLL_TIMEOUT_MS = 2 * 60 * 1000;
 const TERMINAL_STAGES = new Set([
   "GEMINI_TARGET_ACCOUNT_CONFIRMED",
   "GEMINI_TARGET_ACCOUNT_NOT_CONFIRMED",
+  "INPRIVATE_ACCESS_REQUIRED",
   "USER_ACTION_REQUIRED",
   "AUTH_TIMEOUT",
   "TARGET_ACCOUNT_NOT_CONFIRMED",
@@ -105,11 +106,15 @@ async function checkExtension() {
       );
       return;
     }
-    if (response.capability !== "SECRETLESS_GOOGLE_SESSION_LAUNCHER") {
-      setConnection(false, "Extension ที่พบไม่ใช่ secretless launcher รุ่นที่กำหนด");
+    if (response.capability !== "INPRIVATE_BROWSER_CREDENTIAL_LAUNCHER") {
+      setConnection(false, "Extension ที่พบไม่ใช่ InPrivate launcher รุ่นที่กำหนด");
       return;
     }
-    setConnection(true, `เชื่อมต่อ Gemini Secretless Launcher v${response.version} แล้ว`);
+    if (response.incognitoAccessAllowed !== true) {
+      setConnection(false, "พบ extension แล้ว แต่ต้องเปิด Allow in InPrivate ที่หน้า Extensions ก่อนใช้งาน");
+      return;
+    }
+    setConnection(true, `เชื่อมต่อ Gemini InPrivate Launcher v${response.version} แล้ว`);
   } catch {
     setConnection(false, "ไม่พบ extension ที่ติดตั้งและอนุญาตสำหรับเว็บนี้");
   }

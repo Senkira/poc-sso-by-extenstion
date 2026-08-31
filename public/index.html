@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light dark">
     <title>Gemini Secretless Launcher POC</title>
-    <link rel="stylesheet" href="/styles.css?v=0.4.8">
-    <script src="/app.js?v=0.4.8" defer></script>
+    <link rel="stylesheet" href="/styles.css?v=0.5.0">
+    <script src="/app.js?v=0.5.0" defer></script>
   </head>
   <body>
     <main class="shell">
@@ -14,9 +14,9 @@
         <p class="eyebrow">ONLINE · EXTENSION ONLY · SECRETLESS</p>
         <h1>เปิด Gemini ผ่าน browser authentication</h1>
         <p class="lead">
-          หน้า Firebase Hosting นี้ติดต่อ extension โดยตรง Extension เลือกบัญชีเป้าหมายและติดตาม flow
-          แต่ไม่อ่าน รับ เก็บ หรือ inject รหัสผ่าน การยืนยันตัวตนต้องมาจาก Google session,
-          browser password manager หรือ Corporate IdP ที่ provision ไว้แล้ว
+          หน้า Firebase Hosting นี้ติดต่อ extension โดยตรง Extension เปิด Edge/Chrome InPrivate,
+          เลือกบัญชีเป้าหมาย และติดตาม flow โดยไม่อ่าน รับ เก็บ หรือ inject รหัสผ่าน
+          การยืนยันตัวตนต้องมาจาก credential ที่บันทึกไว้ใน browser password manager
         </p>
       </header>
 
@@ -29,7 +29,7 @@
           <span id="connection-badge" class="badge pending">Checking</span>
         </div>
 
-        <button id="launch-button" type="button" disabled>เปิด Gemini ผ่าน extension</button>
+        <button id="launch-button" type="button" disabled>เปิด Gemini ใน InPrivate ผ่าน extension</button>
         <button id="retry-button" class="secondary" type="button">ตรวจ extension อีกครั้ง</button>
       </section>
 
@@ -44,7 +44,8 @@
           <div><dt>Note</dt><dd id="note-value">—</dd></div>
         </dl>
         <p class="notice">
-          หาก profile ไม่มี silent credential source ระบบต้องจบที่ <code>USER_ACTION_REQUIRED</code>
+          InPrivate เป็น isolation แบบชั่วคราว ไม่ใช่ persistent browser profile หาก browser ไม่มี saved credential
+          หรือ Google ขอ MFA/device confirmation ระบบต้องจบที่ <code>USER_ACTION_REQUIRED</code>
           และจะไม่เปิดหน้ารับรหัสผ่านของ extension ผลสำเร็จจะนับเมื่อ Gemini แสดงบัญชีเป้าหมายใน account controls เท่านั้น
         </p>
       </section>
@@ -52,10 +53,11 @@
       <details class="card">
         <summary>ติดตั้ง extension ครั้งแรกใน Chrome หรือ Edge</summary>
         <ol>
-          <li><a href="/downloads/gemini-sso-launcher-extension-v0.4.8.zip" download>ดาวน์โหลด extension v0.4.8</a> และแตกไฟล์</li>
+          <li><a href="/downloads/gemini-sso-launcher-extension-v0.5.0.zip" download>ดาวน์โหลด extension v0.5.0</a> และแตกไฟล์</li>
           <li>Chrome เปิด <code>chrome://extensions</code> หรือ Edge เปิด <code>edge://extensions</code></li>
           <li>เปิด Developer mode</li>
           <li>เลือก Load unpacked แล้วเลือกโฟลเดอร์ที่แตกไฟล์ไว้</li>
+          <li>เปิด Details ของ extension แล้วเปิด Allow in InPrivate หนึ่งครั้ง</li>
           <li>กลับมาหน้านี้และกด “ตรวจ extension อีกครั้ง”</li>
         </ol>
         <p>Extension ID ที่กำหนดตายตัว: <code id="extension-id"></code></p>

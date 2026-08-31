@@ -26,7 +26,8 @@ if ($manifest.permissions -contains 'cookies') { throw 'cookies permission is fo
 if ($manifest.permissions -notcontains 'scripting') { throw 'scripting is required for non-secret Google page controls.' }
 if ($app -notmatch [regex]::Escape($expectedExtensionId)) { throw 'Hosted app extension ID does not match the fixed manifest key.' }
 if ($app -notmatch [regex]::Escape("REQUIRED_EXTENSION_VERSION = `"$($manifest.version)`"")) { throw 'Hosted app does not require the packaged extension version.' }
-if ($app -notmatch 'PROTOCOL_VERSION = 3') { throw 'Hosted app must use secretless protocol 3.' }
+if ($app -notmatch 'PROTOCOL_VERSION = 4') { throw 'Hosted app must use InPrivate protocol 4.' }
+if ($manifest.incognito -ne 'spanning') { throw 'Extension must support the ephemeral InPrivate flow.' }
 if ($firebase.hosting.site -ne 'poc-after-sso-login-gemini') { throw 'Wrong Firebase Hosting site.' }
 if (-not ($firebase.hosting.headers | Where-Object { $_.source -eq '/' -and $_.headers.key -contains 'Cache-Control' -and $_.headers.value -contains 'no-cache' })) { throw 'Root HTML route must disable cache.' }
 if (-not ($firebase.hosting.headers | Where-Object { $_.source -eq '**/*.@(js|css)' -and $_.headers.key -contains 'Cache-Control' -and $_.headers.value -contains 'no-cache' })) { throw 'Launcher assets must disable cache.' }
@@ -92,6 +93,7 @@ foreach ($name in $forbidden) {
 
 Write-Output 'PASS manifest-v3'
 Write-Output 'PASS exact-hosted-origin'
+Write-Output 'PASS ephemeral-inprivate-mode'
 Write-Output 'PASS extension-only-no-native-host'
 Write-Output 'PASS fixed-extension-id'
 Write-Output 'PASS static-firebase-hosting'

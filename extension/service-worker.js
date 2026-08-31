@@ -1,6 +1,6 @@
 "use strict";
 
-const PROTOCOL_VERSION = 3;
+const PROTOCOL_VERSION = 4;
 const ALLOWED_ORIGIN = "https://poc-after-sso-login-gemini.web.app";
 const TARGET_EMAIL = "codeassist.04@easybuy.co.th";
 const LOGIN_URL = "https://accounts.google.com/AccountChooser?continue=https%3A%2F%2Fgemini.google.com%2Fapp";
@@ -172,6 +172,7 @@ function publicRun(run) {
     updatedAt: run.updatedAt,
     windowId: Number.isInteger(run.windowId) ? run.windowId : null,
     tabId: Number.isInteger(run.tabId) ? run.tabId : null,
+    incognito: run.incognito === true,
     observedOrigin: run.observedOrigin || null,
     documentObserved: run.documentObserved === true,
     targetAccountConfirmed: run.targetAccountConfirmed === true,
@@ -188,17 +189,30 @@ async function openGeminiOnce(message) {
   }
   const run = await putRun({
     requestId: message.requestId,
-    stage: "OPENING_GOOGLE_WINDOW",
+    stage: "OPENING_INPRIVATE_GOOGLE_WINDOW",
     createdAt: Date.now(),
     observedOrigin: null,
     documentObserved: false,
     targetAccountConfirmed: false,
     identityCheckComplete: false,
     closed: false,
-    note: "Secretless flow: Google, the browser password manager, or an external IdP must supply authentication."
+    incognito: true,
+    note: "Ephemeral InPrivate flow: the browser password manager must supply authentication without exposing the credential to the extension."
   });
   try {
-    const createdWindow = await chrome.windows.create({ url: LOGIN_URL, type: "normal", focused: true });
+    const incognitoAccessAllowed = await chrome.extension.isAllowedIncognitoAccess();
+    if (!incognitoAccessAllowed) {
+      run.stage = "INPRIVATE_ACCESS_REQUIRED";
+      run.note = "Enable Allow in InPrivate for this extension once, then retry.";
+      await putRun(run);
+      return { ok: false, error: "INPRIVATE_ACCESS_REQUIRED", run: publicRun(run) };
+    }
+    const createdWindow = await chrome.windows.create({
+      url: LOGIN_URL,
+      type: "normal",
+      focused: true,
+      incognito: true
+    });
     const tab = createdWindow.tabs?.[0];
     if (!tab || !Number.isInteger(tab.id)) {
       throw new Error("Browser did not return the Google tab.");
@@ -207,8 +221,8 @@ async function openGeminiOnce(message) {
     const savedRun = await updateRun(message.requestId, (current) => {
       current.windowId = createdWindow.id;
       current.tabId = tab.id;
-      if (current.stage === "OPENING_GOOGLE_WINDOW") {
-        current.stage = "GOOGLE_WINDOW_CREATED";
+      if (current.stage === "OPENING_INPRIVATE_GOOGLE_WINDOW") {
+        current.stage = "INPRIVATE_GOOGLE_WINDOW_CREATED";
       }
     });
     await reconcileCurrentFrame(message.requestId, tab.id).catch(() => {});
@@ -237,6 +251,16 @@ function openGemini(message) {
       openOperations.delete(message.requestId);
     }
   });
+}
+
+async function pingExtension() {
+  return {
+    ok: true,
+    version: chrome.runtime.getManifest().version,
+    protocolVersion: PROTOCOL_VERSION,
+    capability: "INPRIVATE_BROWSER_CREDENTIAL_LAUNCHER",
+    incognitoAccessAllowed: await chrome.extension.isAllowedIncognitoAccess()
+  };
 }
 
 function performGoogleStep(targetEmail, expectedPath) {
@@ -566,12 +590,7 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
     : message?.type === "GET_STATUS"
       ? getStatus(message)
       : message?.type === "PING"
-        ? Promise.resolve({
-            ok: true,
-            version: chrome.runtime.getManifest().version,
-            protocolVersion: PROTOCOL_VERSION,
-            capability: "SECRETLESS_GOOGLE_SESSION_LAUNCHER"
-          })
+        ? pingExtension()
         : Promise.resolve({ ok: false, error: "UNKNOWN_MESSAGE" });
   operation.then(sendResponse).catch((error) => {
     sendResponse({ ok: false, error: "INTERNAL_ERROR", detail: error instanceof Error ? error.message : "Unknown error" });
@@ -636,7 +655,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       || typeof message.targetAccountObserved !== "boolean"
       || typeof message.identityCheckComplete !== "boolean"
       || sender.frameId !== 0
-      || !Number.isInteger(sender.tab?.id)) {
+      || !Number.isInteger(sender.tab?.id)
+      || sender.tab.incognito !== true) {
     return false;
   }
   (async () => {

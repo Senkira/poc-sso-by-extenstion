@@ -14,6 +14,7 @@ let performGoogleStepCallCount = 0;
 let performedSideEffectCount = 0;
 let scriptGate = null;
 let scriptStarted = null;
+let incognitoAllowed = true;
 const event = (name) => ({ addListener(listener) { listeners[name] = listener; } });
 
 const chrome = {
@@ -33,9 +34,12 @@ const chrome = {
       return { id: 51, tabs: [{ id: 61 }] };
     }
   },
+  extension: {
+    async isAllowedIncognitoAccess() { return incognitoAllowed; }
+  },
   runtime: {
     id: EXTENSION_ID,
-    getManifest() { return { version: "0.4.8" }; },
+    getManifest() { return { version: "0.5.0" }; },
     onMessageExternal: event("external"),
     onMessage: event("internal")
   },
@@ -146,12 +150,13 @@ async function flush(rounds = 3) {
 async function main() {
   const requestId = "123e4567-e89b-42d3-a456-426614174000";
   const [first, replay] = await Promise.all([
-    external({ type: "OPEN_GEMINI", version: 3, requestId }),
-    external({ type: "OPEN_GEMINI", version: 3, requestId })
+    external({ type: "OPEN_GEMINI", version: 4, requestId }),
+    external({ type: "OPEN_GEMINI", version: 4, requestId })
   ]);
   assert.equal(first.ok, true);
   assert.equal(replay.ok, true);
   assert.equal(createdOptions.length, 1, "same UUID must create exactly one Google window");
+  assert.equal(createdOptions[0].incognito, true, "Google must open in an ephemeral InPrivate window");
 
   listeners.completed({
     frameId: 0,
@@ -161,7 +166,7 @@ async function main() {
     documentId: currentFrame.documentId
   });
   await flush();
-  let status = await external({ type: "GET_STATUS", version: 3, requestId });
+  let status = await external({ type: "GET_STATUS", version: 4, requestId });
   assert.equal(status.run.stage, "ACCOUNT_SELECTED");
 
   currentFrame = { url: "https://accounts.google.com/v3/signin/challenge/pwd", documentId: "doc-account-chooser" };
@@ -179,7 +184,7 @@ async function main() {
   const staleGate = deferred();
   scriptStarted = staleStarted.resolve;
   scriptGate = staleGate.promise;
-  const stalePathStatus = external({ type: "GET_STATUS", version: 3, requestId });
+  const stalePathStatus = external({ type: "GET_STATUS", version: 4, requestId });
   await staleStarted.promise;
   currentFrame = { url: "https://accounts.google.com/v3/signin/challenge/pwd", documentId: "doc-account-chooser" };
   scriptStep = "BROWSER_CREDENTIAL_SUBMIT_REQUESTED";
@@ -196,7 +201,7 @@ async function main() {
   scriptGate = null;
   scriptStarted = null;
   await flush(8);
-  status = await external({ type: "GET_STATUS", version: 3, requestId });
+  status = await external({ type: "GET_STATUS", version: 4, requestId });
   assert.equal(status.run.stage, "BROWSER_CREDENTIAL_SUBMIT_REQUESTED");
   assert.equal(performGoogleStepCallCount, 2, "stale step must be retried once for the current path");
   assert.equal(performedSideEffectCount, 1, "stale expected-path execution must have no side effect");
@@ -211,7 +216,7 @@ async function main() {
   const gate = deferred();
   scriptStarted = started.resolve;
   scriptGate = gate.promise;
-  const recoveredStatus = external({ type: "GET_STATUS", version: 3, requestId });
+  const recoveredStatus = external({ type: "GET_STATUS", version: 4, requestId });
   await started.promise;
   listeners.completed({
     frameId: 0,
@@ -237,7 +242,7 @@ async function main() {
     timeStamp: Date.now() + 30
   });
   await flush();
-  status = await external({ type: "GET_STATUS", version: 3, requestId });
+  status = await external({ type: "GET_STATUS", version: 4, requestId });
   assert.equal(
     status.run.stage,
     "BROWSER_CREDENTIAL_SUBMIT_REQUESTED",
@@ -250,7 +255,7 @@ async function main() {
   store[`run:${requestId}`].nextAuthCheckAt = null;
   currentFrame = { url: "https://accounts.google.com/v3/signin/challenge/otp", documentId: "doc-account-chooser" };
   scriptStep = "AUTH_PAGE_CHANGED";
-  status = await external({ type: "GET_STATUS", version: 3, requestId });
+  status = await external({ type: "GET_STATUS", version: 4, requestId });
   assert.equal(
     status.run.stage,
     "AUTH_TRANSITION_OBSERVED",
@@ -333,13 +338,13 @@ async function main() {
   store[`run:${requestId}`].authPendingChecks = 0;
   store[`run:${requestId}`].nextAuthCheckAt = null;
   scriptStep = "AUTH_PENDING";
-  status = await external({ type: "GET_STATUS", version: 3, requestId });
+  status = await external({ type: "GET_STATUS", version: 4, requestId });
   assert.equal(status.run.stage, "AUTH_PENDING");
   store[`run:${requestId}`].nextAuthCheckAt = Date.now() - 1;
-  status = await external({ type: "GET_STATUS", version: 3, requestId });
+  status = await external({ type: "GET_STATUS", version: 4, requestId });
   assert.equal(status.run.stage, "AUTH_PENDING");
   store[`run:${requestId}`].nextAuthCheckAt = Date.now() - 1;
-  status = await external({ type: "GET_STATUS", version: 3, requestId });
+  status = await external({ type: "GET_STATUS", version: 4, requestId });
   assert.equal(status.run.stage, "USER_ACTION_REQUIRED");
   assert.match(status.run.note, /No browser-managed credential/);
 
@@ -348,7 +353,7 @@ async function main() {
   store[`run:${requestId}`].authPendingChecks = 0;
   store[`run:${requestId}`].nextAuthCheckAt = null;
   scriptStep = "PASSWORD_CHALLENGE_REMAINS";
-  status = await external({ type: "GET_STATUS", version: 3, requestId });
+  status = await external({ type: "GET_STATUS", version: 4, requestId });
   assert.equal(status.run.stage, "USER_ACTION_REQUIRED");
   assert.match(status.run.note, /No browser-managed credential/);
 
@@ -364,26 +369,26 @@ async function main() {
   await internal(
     {
       type: "GEMINI_DOCUMENT_SIGNAL",
-      version: 3,
+      version: 4,
       targetAccountObserved: true,
       identityCheckComplete: true
     },
-    { frameId: 0, url: currentFrame.url, documentId: currentFrame.documentId, tab: { id: 61 } }
+    { frameId: 0, url: currentFrame.url, documentId: currentFrame.documentId, tab: { id: 61, incognito: true } }
   );
-  status = await external({ type: "GET_STATUS", version: 3, requestId });
+  status = await external({ type: "GET_STATUS", version: 4, requestId });
   assert.equal(status.run.stage, "GEMINI_TARGET_ACCOUNT_CONFIRMED");
   assert.equal(status.run.targetAccountConfirmed, true);
 
   await internal(
     {
       type: "GEMINI_DOCUMENT_SIGNAL",
-      version: 3,
+      version: 4,
       targetAccountObserved: false,
       identityCheckComplete: true
     },
-    { frameId: 0, url: currentFrame.url, documentId: currentFrame.documentId, tab: { id: 61 } }
+    { frameId: 0, url: currentFrame.url, documentId: currentFrame.documentId, tab: { id: 61, incognito: true } }
   );
-  status = await external({ type: "GET_STATUS", version: 3, requestId });
+  status = await external({ type: "GET_STATUS", version: 4, requestId });
   assert.equal(status.run.stage, "GEMINI_TARGET_ACCOUNT_CONFIRMED", "confirmed identity must not be downgraded");
 
   const wrongVersionResult = listeners.internal(
@@ -393,18 +398,27 @@ async function main() {
       targetAccountObserved: true,
       identityCheckComplete: true
     },
-    { frameId: 0, url: currentFrame.url, documentId: currentFrame.documentId, tab: { id: 61 } },
+    { frameId: 0, url: currentFrame.url, documentId: currentFrame.documentId, tab: { id: 61, incognito: true } },
     () => { throw new Error("wrong version must not respond"); }
   );
   assert.equal(wrongVersionResult, false);
 
   listeners.tabRemoved(61);
   await flush();
-  status = await external({ type: "GET_STATUS", version: 3, requestId });
+  status = await external({ type: "GET_STATUS", version: 4, requestId });
   assert.equal(status.run.stage, "TAB_CLOSED");
 
+  incognitoAllowed = false;
+  const blockedRequestId = "123e4567-e89b-42d3-a456-426614174001";
+  const blocked = await external({ type: "OPEN_GEMINI", version: 4, requestId: blockedRequestId });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.error, "INPRIVATE_ACCESS_REQUIRED");
+  assert.equal(blocked.run.stage, "INPRIVATE_ACCESS_REQUIRED");
+  assert.equal(createdOptions.length, 1, "no regular fallback window may be opened");
+  incognitoAllowed = true;
+
   const rejected = await external(
-    { type: "PING", version: 3 },
+    { type: "PING", version: 4 },
     { frameId: 0, url: "https://example.com/" }
   );
   assert.equal(rejected.error, "UNTRUSTED_SENDER");
@@ -424,6 +438,7 @@ async function main() {
   console.log("PASS browser-credential-unavailable-fails-closed");
   console.log("PASS target-account-confirmation-is-monotonic");
   console.log("PASS exact-tab-close-state");
+  console.log("PASS inprivate-access-fails-closed");
   console.log("PASS untrusted-origin-rejection");
 }
 

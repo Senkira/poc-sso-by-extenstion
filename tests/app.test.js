@@ -33,8 +33,9 @@ const ids = [
   "123e4567-e89b-42d3-a456-426614174002"
 ];
 let uuidIndex = 0;
-let pingVersion = "0.4.8";
-let pingProtocol = 3;
+let pingVersion = "0.5.0";
+let pingProtocol = 4;
+let incognitoAccessAllowed = true;
 let statusMode = "pending-first";
 let pendingOldPoll = null;
 let now = 1000;
@@ -46,13 +47,14 @@ const chrome = {
     lastError: null,
     sendMessage(extensionId, message, callback) {
       assert.equal(extensionId, "jeenmgigpkffleijbmfciffiodlcdafh");
-      assert.equal(message.version, 3);
+      assert.equal(message.version, 4);
       if (message.type === "PING") {
         callback({
           ok: true,
           version: pingVersion,
           protocolVersion: pingProtocol,
-          capability: "SECRETLESS_GOOGLE_SESSION_LAUNCHER"
+          capability: "INPRIVATE_BROWSER_CREDENTIAL_LAUNCHER",
+          incognitoAccessAllowed
         });
         return;
       }
@@ -191,18 +193,27 @@ async function main() {
   await elements.get("#retry-button").listeners.click();
   await flush();
   assert.equal(elements.get("#connection-badge").textContent, "Not detected");
-  assert.match(elements.get("#connection-detail").textContent, /v0\.3\.0.*v0\.4\.8.*Reload/);
+  assert.match(elements.get("#connection-detail").textContent, /v0\.3\.0.*v0\.5\.0.*Reload/);
 
   pingProtocol = 2;
   await elements.get("#retry-button").listeners.click();
   await flush();
-  assert.match(elements.get("#connection-detail").textContent, /protocol เก่า.*Reload.*v0\.4\.8/);
+  assert.match(elements.get("#connection-detail").textContent, /protocol เก่า.*Reload.*v0\.5\.0/);
+
+  pingVersion = "0.5.0";
+  pingProtocol = 4;
+  incognitoAccessAllowed = false;
+  await elements.get("#retry-button").listeners.click();
+  await flush();
+  assert.equal(elements.get("#connection-badge").textContent, "Not detected");
+  assert.match(elements.get("#connection-detail").textContent, /Allow in InPrivate/);
 
   console.log("PASS stale-run-poll-failure-isolation");
   console.log("PASS single-flight-recursive-polling");
   console.log("PASS terminal-success-stops-polling");
   console.log("PASS lost-run-clears-current-telemetry");
   console.log("PASS old-secretful-extension-rejection");
+  console.log("PASS inprivate-access-gate");
 }
 
 main().catch((error) => {
