@@ -26,6 +26,8 @@ Native Messaging ให้คุณสมบัติที่ POC ต้อง�
 
 Extension ไม่เชื่อ boolean จากหน้าเว็บ แต่ส่ง ID tokenไป `accounts:lookup` และยอมเริ่ม Agent เฉพาะ Firebase user ที่กำหนด จากนั้น request ถูกผูกกับ random UUID, InPrivate tab และ Firebase UID เดียวกัน Prompt submission ต้องยืนยัน ID token ซ้ำ
 
+MV3 service worker อาจถูก suspend/restart ระหว่าง navigation จึง persist เฉพาะ whitelisted non-secret run metadata (`requestId`, tab/window IDs, stages, Firebase UID และ timestamps) ใน `chrome.storage.session` ค่า Firebase ID token และ Google credential ไม่ถูก persist และ session state ถูกล้างเมื่อ browser session จบ
+
 ## Google credential lifecycle
 
 1. Google password ไม่ถูกเรียกจนกว่าจะพบ `/challenge/pwd` และ document แสดง exact target account เพียงบัญชีเดียว

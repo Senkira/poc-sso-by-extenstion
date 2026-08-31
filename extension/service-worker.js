@@ -7,15 +7,23 @@ const LOGIN_URL = "https://accounts.google.com/ServiceLogin?continue=https%3A%2F
 const NATIVE_HOST = "com.senkira.gemini_extension_agent";
 const FIREBASE_API_KEY = "AIzaSyBAmRwEIELh_AA7E1omzf8TrVV3Cp4HPFc";
 const POC_AUTH_EMAIL = "o1234567@poc.invalid";
+const SESSION_STATE_KEY = "geminiExtensionAgentV7";
 const RUN_TTL_MS = 10 * 60 * 1000;
-const AUTOMATION_RETRY_LIMIT = 20;
-const AUTOMATION_RETRY_MS = 250;
+const AUTOMATION_RETRY_LIMIT = 60;
+const AUTOMATION_RETRY_MS = 500;
+const AUTH_TIMEOUT_MINUTES = 1;
 const runs = new Map();
 const tabToRequest = new Map();
 const automationLocks = new Map();
+let stateReady = null;
+let persistTail = Promise.resolve();
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function authAlarmName(requestId) {
+  return `gemini-auth-timeout:${requestId}`;
 }
 
 function isRequestId(value) {
@@ -55,6 +63,70 @@ function publicRun(run) {
   };
 }
 
+function persistedRun(run) {
+  return {
+    ...publicRun(run),
+    pocUid: typeof run.pocUid === "string" ? run.pocUid : null
+  };
+}
+
+async function hydrateState() {
+  if (!chrome.storage?.session) {
+    throw new Error("SESSION_STORAGE_UNAVAILABLE");
+  }
+  const data = await chrome.storage.session.get(SESSION_STATE_KEY);
+  const savedRuns = Array.isArray(data?.[SESSION_STATE_KEY]?.runs)
+    ? data[SESSION_STATE_KEY].runs
+    : [];
+  for (const saved of savedRuns) {
+    if (!isRequestId(saved?.requestId)
+        || !Number.isFinite(saved.createdAt)
+        || Date.now() - saved.createdAt > RUN_TTL_MS
+        || typeof saved.pocUid !== "string") {
+      continue;
+    }
+    const run = {
+      requestId: saved.requestId,
+      stage: typeof saved.stage === "string" ? saved.stage : "STATE_RECOVERY_FAILED",
+      createdAt: saved.createdAt,
+      updatedAt: Number.isFinite(saved.updatedAt) ? saved.updatedAt : saved.createdAt,
+      windowId: Number.isInteger(saved.windowId) ? saved.windowId : null,
+      tabId: Number.isInteger(saved.tabId) ? saved.tabId : null,
+      incognito: saved.incognito === true,
+      observedOrigin: typeof saved.observedOrigin === "string" ? saved.observedOrigin : null,
+      targetAccountConfirmed: saved.targetAccountConfirmed === true,
+      identityCheckComplete: saved.identityCheckComplete === true,
+      credentialDelivered: saved.credentialDelivered === true,
+      pocUid: saved.pocUid,
+      closed: saved.closed === true,
+      note: typeof saved.note === "string" ? saved.note : null
+    };
+    runs.set(run.requestId, run);
+    if (!run.closed && Number.isInteger(run.tabId)) {
+      tabToRequest.set(run.tabId, run.requestId);
+    }
+  }
+}
+
+function ensureStateReady() {
+  if (!stateReady) {
+    stateReady = hydrateState();
+  }
+  return stateReady;
+}
+
+function persistState() {
+  const state = {
+    runs: Array.from(runs.values())
+      .filter((run) => Date.now() - run.createdAt <= RUN_TTL_MS)
+      .map(persistedRun)
+  };
+  persistTail = persistTail
+    .catch(() => {})
+    .then(() => chrome.storage.session.set({ [SESSION_STATE_KEY]: state }));
+  return persistTail;
+}
+
 function updateRun(run, patch) {
   Object.assign(run, patch, { updatedAt: Date.now() });
   return run;
@@ -70,6 +142,7 @@ function getRun(requestId) {
     if (Number.isInteger(run.tabId)) {
       tabToRequest.delete(run.tabId);
     }
+    void persistState();
     return null;
   }
   return run;
@@ -119,6 +192,11 @@ async function verifyPocIdToken(idToken) {
 }
 
 async function startAgent(message) {
+  try {
+    await ensureStateReady();
+  } catch {
+    return { ok: false, error: "SESSION_STORAGE_UNAVAILABLE" };
+  }
   if (message.version !== PROTOCOL_VERSION
       || !isRequestId(message.requestId)) {
     return { ok: false, error: "INVALID_REQUEST" };
@@ -171,12 +249,14 @@ async function startAgent(message) {
       stage: "ISOLATED_WINDOW_CREATED",
       note: "The isolated window is hidden while the extension agent authenticates."
     });
+    await persistState();
     return { ok: true, run: publicRun(run), replayed: false };
   } catch (error) {
     updateRun(run, {
       stage: "OPEN_FAILED",
       note: error instanceof Error ? error.message : "Could not open the isolated window."
     });
+    await persistState().catch(() => {});
     return { ok: false, error: "OPEN_FAILED", run: publicRun(run) };
   }
 }
@@ -296,8 +376,10 @@ async function closeFailedWindow(run) {
 }
 
 async function failRun(run, stage, note) {
-  updateRun(run, { stage, note, identityCheckComplete: true });
+  updateRun(run, { stage, note, identityCheckComplete: true, closed: true });
+  await chrome.alarms.clear(authAlarmName(run.requestId)).catch(() => {});
   await closeFailedWindow(run);
+  await persistState().catch(() => {});
 }
 
 async function automateGoogle(run, tabId) {
@@ -329,6 +411,7 @@ async function automateGoogle(run, tabId) {
       }
       if (step !== "PASSWORD_REQUIRED") {
         updateRun(run, { stage: step, note: null });
+        await persistState();
         return;
       }
 
@@ -336,6 +419,7 @@ async function automateGoogle(run, tabId) {
         stage: "FETCHING_ONE_SHOT_CREDENTIAL",
         note: "Requesting the target credential from the local one-shot bridge."
       });
+      await persistState();
       let credential;
       try {
         credential = await fetchOneShotCredential(run);
@@ -351,6 +435,8 @@ async function automateGoogle(run, tabId) {
             stage: "PASSWORD_SUBMITTED",
             note: "The one-shot credential was submitted and discarded from extension memory."
           });
+          chrome.alarms.create(authAlarmName(run.requestId), { delayInMinutes: AUTH_TIMEOUT_MINUTES });
+          await persistState();
           return;
         }
         await failRun(run, passwordStep, "The exact Google password form could not be submitted safely.");
@@ -374,6 +460,7 @@ async function automateGoogle(run, tabId) {
 }
 
 async function handleNavigation(details) {
+  await ensureStateReady();
   if (details.frameId !== 0) return;
   const requestId = tabToRequest.get(details.tabId);
   const run = requestId ? getRun(requestId) : null;
@@ -390,6 +477,7 @@ async function handleNavigation(details) {
       note: "Gemini loaded; waiting for exact account confirmation."
     });
   }
+  await persistState();
 }
 
 function injectPrompt(prompt) {
@@ -411,6 +499,11 @@ function injectPrompt(prompt) {
 }
 
 async function postPrompt(message) {
+  try {
+    await ensureStateReady();
+  } catch {
+    return { ok: false, error: "SESSION_STORAGE_UNAVAILABLE" };
+  }
   const run = getRun(message.requestId);
   if (!run || run.stage !== "GEMINI_TARGET_ACCOUNT_CONFIRMED" || !run.targetAccountConfirmed) {
     return { ok: false, error: "GEMINI_NOT_READY" };
@@ -431,8 +524,23 @@ async function postPrompt(message) {
     target: { tabId: run.tabId }, func: injectPrompt, args: [message.prompt]
   });
   const result = results?.[0]?.result || { ok: false, error: "PROMPT_SUBMIT_FAILED" };
-  if (result.ok) updateRun(run, { stage: "PROMPT_SUBMITTED", note: "The prompt was posted to the confirmed Gemini session." });
+  if (result.ok) {
+    updateRun(run, { stage: "PROMPT_SUBMITTED", note: "The prompt was posted to the confirmed Gemini session." });
+    await persistState();
+  }
   return { ...result, run: publicRun(run) };
+}
+
+async function getStatus(message) {
+  if (message.version !== PROTOCOL_VERSION || !isRequestId(message.requestId)) {
+    return { ok: false, error: "INVALID_REQUEST" };
+  }
+  try {
+    await ensureStateReady();
+  } catch {
+    return { ok: false, error: "SESSION_STORAGE_UNAVAILABLE" };
+  }
+  return { ok: true, run: publicRun(getRun(message.requestId)) };
 }
 
 chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
@@ -442,7 +550,7 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
   }
   const task = message?.type === "PING" ? pingExtension()
     : message?.type === "START_AGENT" ? startAgent(message)
-      : message?.type === "GET_STATUS" ? Promise.resolve({ ok: true, run: publicRun(getRun(message.requestId)) })
+      : message?.type === "GET_STATUS" ? getStatus(message)
         : message?.type === "POST_PROMPT" ? postPrompt(message)
           : Promise.resolve({ ok: false, error: "UNKNOWN_MESSAGE" });
   task.then(sendResponse).catch((error) => sendResponse({
@@ -452,15 +560,20 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
 });
 
 chrome.webNavigation.onCompleted.addListener((details) => { handleNavigation(details).catch(() => {}); });
-chrome.webNavigation.onCommitted.addListener((details) => {
+async function handleCommitted(details) {
+  await ensureStateReady();
   if (details.frameId !== 0) return;
   const requestId = tabToRequest.get(details.tabId);
   const run = requestId ? getRun(requestId) : null;
   if (!run || run.closed) return;
-  try { updateRun(run, { observedOrigin: new URL(details.url).origin }); } catch { /* ignored */ }
-});
+  try {
+    updateRun(run, { observedOrigin: new URL(details.url).origin });
+    await persistState();
+  } catch { /* ignored */ }
+}
+chrome.webNavigation.onCommitted.addListener((details) => { handleCommitted(details).catch(() => {}); });
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+async function handleInternalMessage(message, sender) {
   if (message?.type !== "GEMINI_DOCUMENT_SIGNAL"
       || message.version !== PROTOCOL_VERSION
       || typeof message.targetAccountObserved !== "boolean"
@@ -468,19 +581,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       || sender.frameId !== 0
       || !Number.isInteger(sender.tab?.id)
       || sender.tab.incognito !== true) {
-    return false;
+    return { ok: false };
   }
+  await ensureStateReady();
   const requestId = tabToRequest.get(sender.tab.id);
   const run = requestId ? getRun(requestId) : null;
   if (!run || run.closed) {
-    sendResponse({ ok: false });
-    return false;
+    return { ok: false };
   }
   let origin;
-  try { origin = new URL(sender.url).origin; } catch { sendResponse({ ok: false }); return false; }
+  try { origin = new URL(sender.url).origin; } catch { return { ok: false }; }
   if (origin !== "https://gemini.google.com") {
-    sendResponse({ ok: false });
-    return false;
+    return { ok: false };
   }
   if (message.targetAccountObserved) {
     updateRun(run, {
@@ -489,18 +601,43 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       identityCheckComplete: true,
       note: "Gemini rendered the exact target account."
     });
+    await chrome.alarms.clear(authAlarmName(run.requestId)).catch(() => {});
+    await persistState();
     chrome.windows.update(run.windowId, { state: "normal", focused: true }).catch(() => {});
   } else if (message.identityCheckComplete && !run.targetAccountConfirmed) {
-    failRun(run, "GEMINI_TARGET_ACCOUNT_NOT_CONFIRMED", "Gemini loaded with an unconfirmed account.").catch(() => {});
+    await failRun(run, "GEMINI_TARGET_ACCOUNT_NOT_CONFIRMED", "Gemini loaded with an unconfirmed account.");
   }
-  sendResponse({ ok: true, confirmed: run.targetAccountConfirmed, complete: run.identityCheckComplete });
-  return false;
+  return { ok: true, confirmed: run.targetAccountConfirmed, complete: run.identityCheckComplete };
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type !== "GEMINI_DOCUMENT_SIGNAL") return false;
+  handleInternalMessage(message, sender)
+    .then(sendResponse)
+    .catch(() => sendResponse({ ok: false }));
+  return true;
 });
 
-chrome.tabs.onRemoved.addListener((tabId) => {
+async function handleTabRemoved(tabId) {
+  await ensureStateReady();
   const requestId = tabToRequest.get(tabId);
   if (!requestId) return;
   const run = getRun(requestId);
-  if (run) updateRun(run, { closed: true, stage: "TAB_CLOSED" });
+  if (run) {
+    updateRun(run, { closed: true, stage: "TAB_CLOSED" });
+    await chrome.alarms.clear(authAlarmName(run.requestId)).catch(() => {});
+  }
   tabToRequest.delete(tabId);
-});
+  await persistState();
+}
+chrome.tabs.onRemoved.addListener((tabId) => { handleTabRemoved(tabId).catch(() => {}); });
+
+async function handleAlarm(alarm) {
+  const prefix = "gemini-auth-timeout:";
+  if (typeof alarm?.name !== "string" || !alarm.name.startsWith(prefix)) return;
+  await ensureStateReady();
+  const run = getRun(alarm.name.slice(prefix.length));
+  if (!run || run.closed || run.targetAccountConfirmed) return;
+  await failRun(run, "AUTH_TIMEOUT", "Google did not complete authentication before the one-shot deadline.");
+}
+chrome.alarms.onAlarm.addListener((alarm) => { handleAlarm(alarm).catch(() => {}); });

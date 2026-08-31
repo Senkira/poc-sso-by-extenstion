@@ -9,11 +9,20 @@ const createdWindows = [];
 const updatedWindows = [];
 const removedWindows = [];
 const nativeMessages = [];
+const createdAlarms = [];
+const clearedAlarms = [];
 let googleStep = "PASSWORD_REQUIRED";
 const pocIdToken = "test-id-token".padEnd(120, "x");
+const sessionState = {};
+let sessionStorageWrites = 0;
 
 const event = (name) => ({ addListener(listener) { listeners[name] = listener; } });
 const chrome = {
+  alarms: {
+    create(name, options) { createdAlarms.push({ name, options }); },
+    async clear(name) { clearedAlarms.push(name); return true; },
+    onAlarm: event("alarm")
+  },
   extension: {
     isAllowedIncognitoAccess(callback) { callback(true); }
   },
@@ -25,6 +34,12 @@ const chrome = {
     },
     onMessageExternal: event("external"),
     onMessage: event("internal")
+  },
+  storage: {
+    session: {
+      async get(key) { return { [key]: sessionState[key] }; },
+      async set(values) { Object.assign(sessionState, values); sessionStorageWrites += 1; }
+    }
   },
   windows: {
     async create(options) {
@@ -75,7 +90,11 @@ const context = {
   },
   setTimeout(callback) { Promise.resolve().then(callback); return 1; }
 };
-vm.runInNewContext(fs.readFileSync("extension/service-worker.js", "utf8"), context);
+const workerSource = fs.readFileSync("extension/service-worker.js", "utf8");
+function loadWorker() {
+  vm.runInNewContext(workerSource, { ...context });
+}
+loadWorker();
 
 function external(message, sender = { frameId: 0, url: "https://poc-after-sso-login-gemini.web.app/" }) {
   return new Promise((resolve) => listeners.external(message, sender, resolve));
@@ -109,6 +128,9 @@ async function main() {
   assert.equal(createdWindows[0].incognito, true);
   assert.equal(createdWindows[0].focused, false);
   assert.equal(createdWindows[0].state, "minimized");
+  assert.equal(sessionStorageWrites > 0, true);
+
+  loadWorker();
 
   listeners.completed({
     frameId: 0,
@@ -122,6 +144,7 @@ async function main() {
   assert.equal(Object.prototype.hasOwnProperty.call(status.run, "password"), false);
   assert.equal(nativeMessages.length, 1);
   assert.equal(nativeMessages[0].host, "com.senkira.gemini_extension_agent");
+  assert.equal(createdAlarms[0].name, `gemini-auth-timeout:${requestId}`);
 
   listeners.committed({ frameId: 0, tabId: 81, url: "https://gemini.google.com/app" });
   await internal(
@@ -134,6 +157,7 @@ async function main() {
   assert.equal(updatedWindows[0].id, 71);
   assert.equal(updatedWindows[0].options.state, "normal");
   assert.equal(updatedWindows[0].options.focused, true);
+  assert.equal(clearedAlarms.includes(`gemini-auth-timeout:${requestId}`), true);
 
   const posted = await external({
     type: "POST_PROMPT", version: 7, requestId, pocIdToken, prompt: "POC test"
@@ -161,6 +185,17 @@ async function main() {
   assert.equal(challenged.run.stage, "USER_ACTION_REQUIRED");
   assert.equal(removedWindows.includes(71), true);
 
+  googleStep = "PASSWORD_REQUIRED";
+  const timeoutId = "123e4567-e89b-42d3-a456-426614174002";
+  await external({ type: "START_AGENT", version: 7, requestId: timeoutId, pocIdToken });
+  listeners.completed({ frameId: 0, tabId: 81, url: "https://accounts.google.com/v3/signin/challenge/pwd" });
+  await flush();
+  listeners.alarm({ name: `gemini-auth-timeout:${timeoutId}` });
+  await flush();
+  const timedOut = await external({ type: "GET_STATUS", version: 7, requestId: timeoutId });
+  assert.equal(timedOut.run.stage, "AUTH_TIMEOUT");
+  assert.equal(timedOut.run.closed, true);
+
   console.log("PASS extension-agent-state-machine");
   console.log("PASS isolated-window-hidden-until-confirmed");
   console.log("PASS one-shot-native-credential-bridge");
@@ -168,6 +203,8 @@ async function main() {
   console.log("PASS interactive-challenge-fails-closed");
   console.log("PASS untrusted-origin-rejection");
   console.log("PASS firebase-auth-gates-agent-start-and-prompt");
+  console.log("PASS mv3-worker-restart-restores-non-secret-run-state");
+  console.log("PASS stalled-password-submit-fails-closed");
 }
 
 main().catch((error) => {

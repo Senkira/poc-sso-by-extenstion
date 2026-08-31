@@ -17,6 +17,8 @@ if ($manifest.manifest_version -ne 3) { throw 'Manifest V3 is required.' }
 if ($manifest.version -ne '0.7.0') { throw 'Unexpected extension version.' }
 if ($manifest.incognito -ne 'spanning') { throw 'Spanning InPrivate execution is required.' }
 if ($manifest.permissions -notcontains 'nativeMessaging') { throw 'Native Messaging is required for the one-shot credential bridge.' }
+if ($manifest.permissions -notcontains 'storage') { throw 'Session-only state persistence is required for MV3 worker restarts.' }
+if ($manifest.permissions -notcontains 'alarms') { throw 'A service-worker-safe authentication timeout is required.' }
 if ($manifest.permissions -contains 'cookies' -or $manifest.permissions -contains 'debugger') { throw 'Cookie/debugger permissions are forbidden.' }
 if ($manifest.host_permissions -contains 'http://127.0.0.1/*') { throw 'The retired loopback protocol bridge must not be present.' }
 if ($manifest.host_permissions -notcontains 'https://identitytoolkit.googleapis.com/*') { throw 'Firebase Auth verification host is missing.' }
@@ -38,6 +40,8 @@ if ($nativeHost -notmatch 'MaximumMessageBytes') { throw 'Native message bound i
 if ($nativeHost -match '(?i)@[s]{2}w0rd') { throw 'A password-like literal is present in native-host source.' }
 if (($worker + $app + $html) -match '(?i)@[s]{2}w0rd') { throw 'A password-like literal is present in web/extension source.' }
 if ($worker -match 'chrome\.storage\.(local|sync)') { throw 'Extension must not persist credentials.' }
+if ($worker -notmatch 'chrome\.storage\.session') { throw 'MV3 run state must survive service-worker restarts in session storage.' }
+if ($worker -notmatch 'AUTH_TIMEOUT' -or $worker -notmatch 'chrome\.alarms') { throw 'Stalled Google authentication must fail closed.' }
 if ($firebase.hosting.site -ne 'poc-after-sso-login-gemini') { throw 'Wrong Firebase Hosting site.' }
 if ($firebase.auth.providers.emailPassword -ne $true) { throw 'Firebase Email/Password authentication is not configured.' }
 if (($firebase.hosting.headers | ConvertTo-Json -Depth 20) -notmatch 'identitytoolkit\.googleapis\.com') { throw 'Firebase Auth endpoint is blocked by CSP.' }
@@ -96,6 +100,8 @@ Write-Output 'PASS exact-account-confirmation-gate'
 Write-Output 'PASS prompt-handoff-after-confirmation'
 Write-Output 'PASS firebase-auth-gates-extension-agent'
 Write-Output 'PASS inprivate-access-gate'
+Write-Output 'PASS mv3-session-state-recovery'
+Write-Output 'PASS stalled-authentication-timeout'
 Write-Output 'PASS static-firebase-hosting-no-idle-compute'
 Write-Output 'PASS no-node-runtime-dependency'
 Write-Output 'PASS copied-agent-reference'

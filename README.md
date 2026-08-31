@@ -18,6 +18,8 @@ Production URL: <https://poc-after-sso-login-gemini.web.app/>
 
 ถ้า Google ขอ MFA, CAPTCHA, passkey, device approval หรือหน้า password ไม่ผูกกับ target account ระบบปิด InPrivate window และรายงาน failure ไม่พยายาม bypass challenge
 
+หลังส่ง password ระบบตั้ง MV3 alarm หนึ่งนาที หาก Google ไม่ไปถึง Gemini และยืนยันบัญชีเป้าหมายภายในเวลา ระบบปิด hidden window ด้วย `AUTH_TIMEOUT` แทนการค้างเงียบ
+
 ## Install once
 
 Runtime บนเครื่องปลายทางใช้ Edge/Chrome, Extension, PowerShell/.NET ที่มากับ Windows และ Windows Credential Manager ไม่ต้องติดตั้ง Node.js
@@ -38,7 +40,8 @@ Credential target ต้องถูก provision ใน Windows Credential Mana
 - Firebase Hosting เป็น static hosting เท่านั้น ไม่มี Functions, Cloud Run หรือ minimum replica
 - Firebase API key ใน client เป็น public project configuration; Extension ยืนยัน ID token กับ Firebase ก่อนเริ่ม Agent
 - POC Google credential อยู่ใน Windows Credential Manager และปรากฏชั่วคราวเฉพาะ native-host/extension memory ระหว่าง password submission
-- Extension ไม่มี `cookies`, `debugger` หรือ `storage` permission และไม่ copy Google cookies/session
+- Extension ไม่มี `cookies` หรือ `debugger` permission และไม่ copy Google cookies/session
+- Extension ใช้ `chrome.storage.session` เฉพาะ non-secret run/tab metadata เพื่อให้ MV3 service worker restart แล้วทำงานต่อได้ โดยไม่เก็บ Firebase token หรือ Google credential
 - External messages รับเฉพาะ production Firebase origin และ main frame
 - InPrivate session ถูกใช้เพื่อไม่ reuse Google cookies จาก normal profile
 

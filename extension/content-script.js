@@ -1,7 +1,7 @@
 "use strict";
 
 const TARGET_EMAIL = "codeassist.04@easybuy.co.th";
-const MAX_IDENTITY_ATTEMPTS = 8;
+const MAX_IDENTITY_ATTEMPTS = 20;
 
 function targetAccountIsVisible() {
   const normalized = TARGET_EMAIL.toLowerCase();
@@ -39,11 +39,11 @@ async function reportGeminiDocument(attempt = 0) {
       identityCheckComplete
     });
     if ((!response?.ok || !response.confirmed) && !identityCheckComplete) {
-      setTimeout(() => reportGeminiDocument(attempt + 1), 250 * (attempt + 1));
+      setTimeout(() => reportGeminiDocument(attempt + 1), Math.min(1000, 250 * (attempt + 1)));
     }
   } catch {
     if (!identityCheckComplete) {
-      setTimeout(() => reportGeminiDocument(attempt + 1), 250 * (attempt + 1));
+      setTimeout(() => reportGeminiDocument(attempt + 1), Math.min(1000, 250 * (attempt + 1)));
     }
   }
 }
