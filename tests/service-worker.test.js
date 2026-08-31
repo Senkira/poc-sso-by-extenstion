@@ -18,6 +18,7 @@ const sessionState = {};
 let sessionStorageWrites = 0;
 let currentFrame = { documentId: "about-doc", url: "about:blank" };
 let existingWindows = [];
+let failNextTabUpdate = false;
 
 const event = (name) => ({ addListener(listener) { listeners[name] = listener; } });
 const chrome = {
@@ -30,7 +31,7 @@ const chrome = {
     isAllowedIncognitoAccess(callback) { callback(true); }
   },
   runtime: {
-    getManifest() { return { version: "0.9.0" }; },
+    getManifest() { return { version: "0.9.1" }; },
     async sendNativeMessage(host, message) {
       nativeMessages.push({ host, message });
       assert.equal(message.version, 9);
@@ -82,7 +83,14 @@ const chrome = {
     onCommitted: event("committed")
   },
   tabs: {
-    async update(id, options) { updatedTabs.push({ id, options }); return { id, incognito: true, ...options }; },
+    async update(id, options) {
+      updatedTabs.push({ id, options });
+      if (failNextTabUpdate) {
+        failNextTabUpdate = false;
+        throw new Error("simulated navigation failure");
+      }
+      return { id, incognito: true, ...options };
+    },
     async get(id) { return { id, incognito: true, url: currentFrame.url }; },
     onRemoved: event("removed")
   }
@@ -133,7 +141,7 @@ async function flush(rounds = 8) {
 
 async function main() {
   const ping = await external({ type: "PING", version: 9 });
-  assert.equal(ping.version, "0.9.0");
+  assert.equal(ping.version, "0.9.1");
   assert.equal(ping.protocolVersion, 9);
   assert.equal(ping.capability, "EXTENSION_AGENT_ONE_SHOT_BRIDGE");
   assert.equal(ping.incognitoAccessAllowed, true);
@@ -223,6 +231,16 @@ async function main() {
   assert.equal(cancelled.ok, true);
   assert.equal(cancelled.run.stage, "CANCELLED");
 
+  failNextTabUpdate = true;
+  const openFailureId = "123e4567-e89b-42d3-a456-426614174006";
+  const openFailed = await external({
+    type: "START_AGENT", version: 9, requestId: openFailureId, pocIdToken
+  });
+  assert.equal(openFailed.ok, false);
+  assert.equal(openFailed.error, "OPEN_FAILED");
+  assert.equal(openFailed.run.closed, true);
+  assert.equal(removedWindows.includes(71), true);
+
   const rejected = await external(
     { type: "PING", version: 9 },
     { frameId: 0, url: "https://example.com/" }
@@ -307,6 +325,7 @@ async function main() {
   console.log("PASS exact-document-targeting-and-prompt-revalidation");
   console.log("PASS missed-navigation-reconciles-from-current-frame");
   console.log("PASS worker-restart-never-reclaims-credential");
+  console.log("PASS partial-window-open-failure-cleans-up-and-releases-run");
 }
 
 main().catch((error) => {

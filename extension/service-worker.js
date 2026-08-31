@@ -170,6 +170,19 @@ function getRun(requestId) {
   return run;
 }
 
+function purgeExpiredRuns() {
+  let changed = false;
+  for (const [requestId, run] of runs.entries()) {
+    if (Date.now() - run.createdAt <= RUN_TTL_MS) continue;
+    runs.delete(requestId);
+    if (Number.isInteger(run.tabId)) {
+      tabToRequest.delete(run.tabId);
+    }
+    changed = true;
+  }
+  return changed;
+}
+
 async function isIncognitoAccessAllowed() {
   return new Promise((resolve) => {
     if (typeof chrome.extension?.isAllowedIncognitoAccess !== "function") {
@@ -282,6 +295,9 @@ async function startAgent(message) {
       : { ok: false, error: "POC_AUTH_REQUIRED" };
   }
 
+  if (purgeExpiredRuns()) {
+    await persistState();
+  }
   const activeRun = Array.from(runs.values()).find((run) => !run.closed);
   if (activeRun) {
     return { ok: false, error: "RUN_ALREADY_ACTIVE", run: publicRun(activeRun) };
@@ -314,8 +330,9 @@ async function startAgent(message) {
   };
   runs.set(run.requestId, run);
 
+  let createdWindow = null;
   try {
-    const createdWindow = await chrome.windows.create({
+    createdWindow = await chrome.windows.create({
       url: "about:blank",
       type: "normal",
       incognito: true,
@@ -344,8 +361,18 @@ async function startAgent(message) {
   } catch (error) {
     updateRun(run, {
       stage: "OPEN_FAILED",
+      closed: true,
       note: error instanceof Error ? error.message : "Could not open the isolated window."
     });
+    if (Number.isInteger(run.tabId)) {
+      tabToRequest.delete(run.tabId);
+    }
+    const failedWindowId = Number.isInteger(run.windowId)
+      ? run.windowId
+      : Number.isInteger(createdWindow?.id) ? createdWindow.id : null;
+    if (Number.isInteger(failedWindowId)) {
+      await chrome.windows.remove(failedWindowId).catch(() => {});
+    }
     await persistState().catch(() => {});
     return { ok: false, error: "OPEN_FAILED", run: publicRun(run) };
   }

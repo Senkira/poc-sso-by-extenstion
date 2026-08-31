@@ -44,7 +44,7 @@ const chrome = {
       if (message.type === "PING") {
         callback({
           ok: true,
-          version: "0.9.0",
+          version: "0.9.1",
           protocolVersion: 9,
           capability: "EXTENSION_AGENT_ONE_SHOT_BRIDGE",
           incognitoAccessAllowed: true
