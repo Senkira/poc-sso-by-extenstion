@@ -4,18 +4,132 @@ POC นี้แยกจากโปรเจกต์เดิมและไ�
 
 Production URL: <https://poc-after-sso-login-gemini.web.app/>
 
-## Flow
+## Architecture และเส้นทางข้อมูล
 
-1. ผู้ใช้เปิดหน้า POC และกด Login โดยไม่มีช่อง password
-2. หน้า POC ติดต่อ Extension ID คงที่ผ่าน `externally_connectable`
-3. Extension ขอ Firebase ID token จาก HTTPS credential broker; broker ใช้ POC credential ใน Secret Manager ยืนยัน Firebase Auth และ Extension ตรวจ token/UID ซ้ำกับ Firebase
-4. Extension เปิด InPrivate/Incognito window ใหม่แบบ minimized แล้วเริ่ม Google-to-Gemini flow
-5. เมื่อ exact Google document อยู่ที่ `/challenge/pwd` และ selected account เป็น `codeassist.04@easybuy.co.th` เพียงบัญชีเดียว Extension จึงส่ง bearer ID token ไปขอ credential แบบ one-shot
-6. Backend อ่าน Google password จาก Firebase Secret Manager แล้วตอบตรงให้ Extension ผ่าน HTTPS โดยตั้ง `Cache-Control: no-store`
-7. Extension ใช้ password ใน memory, focus และ set exact input, รอ Google DOM, ตรวจว่า input ถือค่าจริงก่อนกด Next หนึ่งครั้ง แล้วตั้งค่า object เป็นค่าว่าง/null และไม่ขอซ้ำ
-8. Extension เปิด Gemini tab ใน isolated window เดิม รอ session, reload หนึ่งครั้ง, ยืนยัน exact target account, ปิด auth tab และแสดง Gemini เหลือหนึ่ง tab
+โค้ดทั้งระบบอยู่ใน repository เดียวกัน:
+
+| ส่วน | ตำแหน่ง | Runtime |
+| --- | --- | --- |
+| Web UI | `public/` | Firebase Hosting / browser tab ปกติ |
+| Credential API | `functions/` | Firebase Functions v2 บน GCP |
+| Edge/Chrome agent | `extension/` | Manifest V3 service worker และ content script |
+
+Password ของ Google **ไม่ผ่าน `public/app.js` และไม่ถูกส่งให้หน้า Web UI** เส้นทางจริงคือ Cloud Function ส่ง HTTPS response ตรงไปที่ Extension service worker จากนั้น service worker ส่งค่าเป็น argument ชั่วคราวให้ script ที่รันใน exact Google document เท่านั้น
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant Web as Firebase Hosting<br/>public/app.js
+    participant Edge as Edge extension router<br/>chrome.runtime
+    participant SW as Extension service worker<br/>extension/service-worker.js
+    participant API as credentialBroker<br/>functions/index.js
+    participant Auth as Firebase Auth<br/>Identity Toolkit
+    participant SM as GCP Secret Manager
+    participant Google as Edge InPrivate<br/>accounts.google.com
+    participant Gemini as Edge InPrivate<br/>gemini.google.com
+
+    User->>Web: Click Login
+    Web->>Edge: sendToExtension(AUTHENTICATE_POC)
+    Edge->>SW: onMessageExternal
+    SW->>API: callCredentialBroker(authenticatePoc)
+    API->>SM: Read POC_FIREBASE_PASSWORD
+    API->>Auth: signInPoc(password)
+    Auth-->>API: Firebase ID token
+    API-->>SW: idToken, expiresIn
+    SW->>Auth: verifyPocIdToken(idToken)
+    SW-->>Web: idToken (no Google password)
+
+    Web->>Edge: sendToExtension(START_AGENT, idToken)
+    Edge->>SW: onMessageExternal
+    SW->>Auth: verifyPocIdToken(idToken)
+    SW->>Google: startAgent -> windows.create(incognito)<br/>tabs.update(LOGIN_URL)
+    Google-->>SW: webNavigation events + documentId
+    SW->>Google: executeScript(inspectGooglePage)
+    Google-->>SW: PASSWORD_REQUIRED + exact account confirmed
+
+    SW->>API: fetchOneShotCredential -> callCredentialBroker<br/>getGoogleCredential + Bearer idToken
+    API->>Auth: verifyIdToken(idToken)
+    API->>SM: Read GEMINI_TARGET_PASSWORD
+    API-->>SW: email + password<br/>HTTPS, Cache-Control: no-store
+    Note over API,SW: Google password travels on this direct HTTPS hop only
+    SW->>Google: executeScript(submitPassword,<br/>password, exact documentId)
+    Google-->>SW: PASSWORD_SUBMITTED
+    Note over SW: password = ""; credential = null;<br/>credentialState = CONSUMED
+
+    SW->>Gemini: openIsolatedGeminiTab()
+    Gemini->>SW: content-script reportGeminiDocument()
+    SW->>Gemini: inspectGeminiActiveAccount()
+    SW->>Gemini: reload once, confirm account, reveal window
+    SW->>Google: close authentication tab
+    Gemini-->>User: One ready Gemini tab
+```
+
+### Web ติดต่อ Extension ใน Edge อย่างไร
+
+Edge ใช้ Chromium Extension API จึงเรียก namespace `chrome.*` เหมือน Chrome แม้ตัว browser จะเป็น Microsoft Edge การเชื่อมต่อไม่ได้ใช้ localhost, custom protocol, Native Messaging หรือ PowerShell แต่ใช้ extension routing ภายใน browser ดังนี้:
+
+1. `extension/manifest.json` มี `key` คงที่ ทำให้ build แบบ unpacked ได้ Extension ID คงที่ `jeenmgigpkffleijbmfciffiodlcdafh`
+2. `externally_connectable.matches` อนุญาตเฉพาะ `https://poc-after-sso-login-gemini.web.app/*`
+3. `public/app.js/sendToExtension(message)` เรียก `chrome.runtime.sendMessage(EXTENSION_ID, message, callback)`
+4. Edge หา Extension จาก ID แล้วส่ง message เข้า `chrome.runtime.onMessageExternal` ใน `extension/service-worker.js`
+5. `isAllowedExternalSender(sender)` ตรวจ origin ของ sender ซ้ำก่อน dispatch ไปยัง `pingExtension`, `authenticatePoc`, `startAgent`, `getStatus`, `postPrompt` หรือ `cancelRun`
+
+ดังนั้นเครื่องใหม่ต้องติดตั้ง Extension ที่ใช้ manifest key เดิมและเปิด Allow in InPrivate/Incognito ถ้าเปลี่ยน manifest key หรือ Extension ID ต้องแก้ทั้ง `EXTENSION_ID` ใน `public/app.js` และ `EXTENSION_ORIGIN`/CORS ใน backend ให้ตรงกัน
+
+### Message และ API contract
+
+| Hop | Message/action | ผู้ส่ง → ผู้รับ | Handler หลัก | มี Google password หรือไม่ |
+| --- | --- | --- | --- | --- |
+| Web → Extension | `PING` | `sendToExtension` → `onMessageExternal` | `pingExtension()` | ไม่มี |
+| Web → Extension | `AUTHENTICATE_POC` | `handleLogin()` → `onMessageExternal` | `authenticatePoc()` | ไม่มี |
+| Extension → API | `action: authenticatePoc` | `callCredentialBroker()` → `credentialBroker` | `validateAuthenticateRequest()` และ `signInPoc()` | ไม่มี Google password |
+| Web → Extension | `START_AGENT` + `pocIdToken` | `launchGemini()` → `onMessageExternal` | `startAgent()` / `startAgentUnlocked()` | ไม่มี |
+| Extension → API | `action: getGoogleCredential` + Bearer token | `fetchOneShotCredential()` → `credentialBroker` | `validateCredentialRequest()` และ `verifyIdToken()` | Response มี email/password |
+| Extension → Google document | function arguments | `automateGoogle()` → `chrome.scripting.executeScript` | `submitPassword()` | มี password ชั่วคราว |
+| Gemini content script → Extension | `GEMINI_DOCUMENT_SIGNAL` | `reportGeminiDocument()` → `onMessage` | `handleInternalMessage()` | ไม่มี |
+| Web → Extension | `GET_STATUS` | `pollStatus()` → `onMessageExternal` | `getStatus()` | ไม่มีและ status ห้ามมี secret |
+
+Payload สำคัญที่ Extension ใช้ขอ credential:
+
+```http
+POST /credentialBroker
+Origin: chrome-extension://jeenmgigpkffleijbmfciffiodlcdafh
+Authorization: Bearer <Firebase-ID-token>
+Content-Type: application/json
+
+{
+  "action": "getGoogleCredential",
+  "requestId": "<UUID-v4>",
+  "version": 10
+}
+```
+
+Backend ทำงานตามลำดับ `validateCredentialRequest()` → `parseBearer()` → Firebase Admin `verifyIdToken()` → ตรวจ exact UID/email → อ่าน `GEMINI_TARGET_PASSWORD` → `sendJson()` พร้อม `Cache-Control: no-store` ข้อมูลนี้ตอบกลับไปยัง request ของ Extension โดยตรง ไม่ได้ตอบไปยัง POC page
+
+### Edge automation และ exact-document gate
+
+1. `startAgentUnlocked()` ตรวจ Firebase token, Allow in InPrivate และบังคับให้ไม่มี InPrivate session เดิม
+2. `chrome.windows.create({ incognito: true, focused: false, state: "minimized" })` สร้าง isolated window
+3. `chrome.tabs.update(...LOGIN_URL)` เปิด Google login และ `tabToRequest` ผูก `tabId` กับ `requestId` ก่อน navigation
+4. `handleCommitted()` และ `handleNavigation()` จับ top-level `documentId` ของแต่ละ navigation
+5. `automateGoogle()` เรียก `inspectGooglePage()` เฉพาะ `documentId` ปัจจุบันเพื่อกรอก email/เลือก target account
+6. ระบบเรียก `fetchOneShotCredential()` หลัง `inspectGooglePage()` คืน `PASSWORD_REQUIRED` และ exact account ตรงเท่านั้น
+7. ก่อนส่ง password เข้า page จะอ่าน frame ใหม่ด้วย `chrome.webNavigation.getFrame()` และตรวจ origin, path และ `documentId` ซ้ำ
+8. `submitPassword()` รอ input node นิ่ง, ตรวจ exact account, set password ผ่าน native input setter, dispatch `input/change`, ตรวจว่าค่ายังอยู่ แล้วคลิก Next หนึ่งครั้ง
+9. `credentialState` เปลี่ยน `NOT_REQUESTED → REQUESTING → CONSUMED`; password object ถูก overwrite หลัง executeScript คืนผล ไม่อนุญาตให้ claim ซ้ำ
+10. `openIsolatedGeminiTab()` เปิด Gemini ใน window เดิม ส่วน `reportGeminiDocument()` และ `inspectGeminiActiveAccount()` ยืนยัน account หลัง reload ก่อนปิด auth tab และแสดง window
 
 ถ้า Google ขอ MFA, CAPTCHA, passkey, device approval หรือหน้า password ไม่ผูกกับ target account ระบบ fail closed และไม่พยายาม bypass challenge
+
+### จุดที่ต้องเปลี่ยนเมื่อนำไปใช้กับงานจริง
+
+- เปลี่ยนค่าคงที่ URL, Firebase project, target account และ allowed hosted origin ให้เป็น environment-specific configuration
+- ตรึง Extension ID ด้วย enterprise deployment policy หรือ signed store package; backend CORS ต้องอนุญาต exact production extension origin เท่านั้น
+- เพิ่ม authorization ตามผู้ใช้จริงและผูก `requestId` กับ server-side one-time claim/expiry; state แบบ one-shot ใน POC ปัจจุบันอยู่ฝั่ง Extension เป็นหลัก
+- ห้าม log request/response body ที่ credential endpoint และต้องเปิด secret rotation, audit log, rate limit และ alert บน GCP
+- ทำ integration test กับ Edge/Chrome เวอร์ชันองค์กร เพราะ Google DOM selector และ interactive challenge เปลี่ยนได้
+- ถ้าข้อกำหนด production ต้องไม่ให้ endpoint อ่าน reusable password สถาปัตยกรรมนี้ไม่เพียงพอ ควรเปลี่ยน credential hop เป็น federated/delegated token หรือ backend-mediated session ที่ไม่ส่ง reusable password ลง client
 
 ## ติดตั้งบนเครื่องผู้ใช้
 
