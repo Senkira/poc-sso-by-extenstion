@@ -5,6 +5,11 @@ const fs = require("fs");
 const vm = require("vm");
 
 const noopEvent = { addListener() {} };
+const observedDelays = [];
+function fastSetTimeout(callback, delay) {
+  observedDelays.push(delay);
+  return setTimeout(callback, 0);
+}
 class FakeInput {
   constructor() { this._value = ""; this.events = []; this.focused = false; }
   get value() { return this._value; }
@@ -36,7 +41,7 @@ const context = vm.createContext({
   Event: FakeEvent,
   InputEvent: FakeEvent,
   HTMLInputElement: FakeInput,
-  setTimeout,
+  setTimeout: fastSetTimeout,
   clearTimeout,
   location: { pathname: "/v3/signin/challenge/pwd" },
   document: null
@@ -133,6 +138,8 @@ async function main() {
   assert.equal(passwordDocument.passwordInput.focused, true);
   assert.equal(passwordDocument.passwordInput.events.includes("input"), true);
   assert.equal(passwordDocument.passwordButton.clicks, 1);
+  assert.equal(observedDelays.includes(3000), true);
+  assert.equal(observedDelays.includes(80), true);
 
   context.document = geminiDocument([accountControl(target)]);
   assert.equal(context.inspectGeminiActiveAccount(target), true);
@@ -150,6 +157,7 @@ async function main() {
   console.log("PASS unrelated-or-conflicting-account-evidence-fails-closed");
   console.log("PASS stale-password-path-fails-before-dom-write");
   console.log("PASS password-value-is-verified-before-single-submit-click");
+  console.log("PASS password-fill-waits-three-seconds-then-submits-after-80ms");
   console.log("PASS gemini-active-account-guard-is-strict");
 }
 

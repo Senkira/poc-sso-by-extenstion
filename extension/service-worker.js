@@ -16,7 +16,7 @@ const AUTOMATION_RETRY_LIMIT = 60;
 const AUTOMATION_RETRY_MS = 500;
 const AUTH_TIMEOUT_MINUTES = 15;
 const BROKER_TIMEOUT_MS = 20000;
-const SCRIPT_TIMEOUT_MS = 8000;
+const SCRIPT_TIMEOUT_MS = 20000;
 const PROMPT_CONFIRM_TIMEOUT_MS = 15000;
 const runs = new Map();
 const tabToRequest = new Map();
@@ -557,10 +557,9 @@ async function submitPassword(targetEmail, password, expectedPath) {
     stablePolls += 1;
     if (stablePolls < 2) continue;
 
-    const disabled = !next
-      || next.disabled === true
-      || next.getAttribute?.("aria-disabled") === "true";
     if (input.value === password) {
+      const disabled = next.disabled === true
+        || next.getAttribute?.("aria-disabled") === "true";
       if (disabled) continue;
       next.click();
       return { step: "PASSWORD_SUBMITTED" };
@@ -569,19 +568,50 @@ async function submitPassword(targetEmail, password, expectedPath) {
       return { step: "PASSWORD_INPUT_UNSTABLE" };
     }
 
-    input.focus();
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    const delayedInput = input;
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    if (location.pathname !== expectedPath || !exactSelectedAccount(targetEmail)) {
+      return { step: "STALE_PASSWORD_DOCUMENT" };
+    }
+    if (document.querySelector("iframe[src*='recaptcha'], input[autocomplete='one-time-code'], input[type='tel']")) {
+      return { step: "USER_ACTION_REQUIRED" };
+    }
+    const inputAfterDelay = document.querySelector("input[name='Passwd'], input[type='password']");
+    if (inputAfterDelay !== delayedInput) {
+      lastInput = inputAfterDelay;
+      stablePolls = inputAfterDelay ? 1 : 0;
+      continue;
+    }
+
+    delayedInput.focus();
+    await new Promise((resolve) => setTimeout(resolve, 50));
     const focusedInput = document.querySelector("input[name='Passwd'], input[type='password']");
-    if (focusedInput !== input) {
+    if (focusedInput !== delayedInput) {
       lastInput = focusedInput;
       stablePolls = focusedInput ? 1 : 0;
       continue;
     }
-    if (setter) setter.call(input, password); else input.value = password;
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.dispatchEvent(new Event("change", { bubbles: true }));
+    if (setter) setter.call(delayedInput, password); else delayedInput.value = password;
+    delayedInput.dispatchEvent(new Event("input", { bubbles: true }));
+    delayedInput.dispatchEvent(new Event("change", { bubbles: true }));
     injectionAttempts += 1;
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    const submittedInput = document.querySelector("input[name='Passwd'], input[type='password']");
+    const submittedNext = document.querySelector("#passwordNext button, #passwordNext");
+    const submitDisabled = !submittedNext
+      || submittedNext.disabled === true
+      || submittedNext.getAttribute?.("aria-disabled") === "true";
+    if (location.pathname === expectedPath
+        && exactSelectedAccount(targetEmail)
+        && submittedInput === delayedInput
+        && submittedInput.value === password
+        && !submitDisabled) {
+      submittedNext.click();
+      return { step: "PASSWORD_SUBMITTED" };
+    }
+    lastInput = submittedInput;
+    stablePolls = submittedInput ? 1 : 0;
   }
   return { step: injectionAttempts > 0 ? "PASSWORD_INPUT_UNSTABLE" : "PASSWORD_FORM_UNAVAILABLE" };
 }
@@ -744,7 +774,7 @@ async function automateGoogle(run, tabId, documentId) {
           credentialDelivered: true,
           credentialSubmitted: false,
           credentialState: "CONSUMED",
-          note: "The one-shot credential was received; verifying the password field before submission."
+          note: "The credential was received; waiting three seconds for the password field to settle before submission."
         });
         await persistState();
         const latestFrame = await chrome.webNavigation.getFrame({ tabId, frameId: 0 });

@@ -10,7 +10,7 @@
 
 ขั้นตอนบนเครื่องใหม่:
 
-1. ดาวน์โหลด [Extension v0.13.2](https://poc-after-sso-login-gemini.web.app/downloads/gemini-extension-agent-poc-v0.13.2.zip) แล้วแตก ZIP
+1. ดาวน์โหลด [Extension v0.13.3](https://poc-after-sso-login-gemini.web.app/downloads/gemini-extension-agent-poc-v0.13.3.zip) แล้วแตก ZIP
 2. เปิด `edge://extensions` หรือ `chrome://extensions`
 3. เปิด Developer mode และกด Load unpacked โดยเลือกโฟลเดอร์ `extension`
 4. เปิด Allow in InPrivate/Incognito ในหน้า Details ของ Extension
