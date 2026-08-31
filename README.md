@@ -54,6 +54,8 @@ v0.5.0 เปลี่ยน launch context เป็น InPrivate เพื่�
 
 Live E2E บน Edge เมื่อวันที่ 2026-08-31 ยืนยันว่า production Firebase เชื่อมต่อ extension v0.5.0 ผ่าน protocol 4, สร้าง InPrivate และส่งบัญชีเป้าหมายจนถึง `EMAIL_SUBMITTED` ที่ `accounts.google.com` ได้จริง แต่จบที่ `USER_ACTION_REQUIRED` เพราะ profile ที่ทดสอบยังไม่มี browser-managed credential หรือ silent authentication ที่ใช้ได้ ไม่พบ Gemini document และ target account ยังเป็น `Pending` ดังนั้นผลรอบนี้พิสูจน์ launch/orchestration และ fail-closed เท่านั้น ยังไม่พิสูจน์ successful zero-touch authentication
 
+ทดลอง provision เพิ่มใน Edge profile เดียวกันโดยล็อกอินบัญชีเป้าหมายในหน้าต่างปกติจนถึง Gemini สำเร็จ แล้วเปิด production และรัน InPrivate ใหม่โดยไม่ช่วยพิมพ์หรือคลิกหลัง launch ผลยังเป็น `EMAIL_SUBMITTED` → `USER_ACTION_REQUIRED` พร้อม `Gemini document: Not observed` และ `Target account: Pending` จึงพิสูจน์ว่า normal-profile login สำเร็จเพียงอย่างเดียวไม่เท่ากับมี usable browser-managed auto-sign-in credential และห้ามนับ session ในหน้าต่างปกติเป็นผลผ่านของ isolated flow
+
 ## Install once in Chrome or Edge
 
 1. ดาวน์โหลด ZIP จาก <https://poc-after-sso-login-gemini.web.app/downloads/gemini-sso-launcher-extension-v0.5.0.zip> และแตกไฟล์
