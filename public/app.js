@@ -1,14 +1,14 @@
 "use strict";
 
 const EXTENSION_ID = "jeenmgigpkffleijbmfciffiodlcdafh";
-const REQUIRED_EXTENSION_VERSION = "0.12.1";
+const REQUIRED_EXTENSION_VERSION = "0.12.2";
 const PROTOCOL_VERSION = 9;
 const CAPABILITY = "EXTENSION_AGENT_ONE_SHOT_BRIDGE";
 const POC_USERNAME = "O1234567";
 const AUTH_TOKEN_KEY = "poc-firebase-id-token";
 const AUTH_EXPIRY_KEY = "poc-firebase-id-token-expiry";
 const POLL_INTERVAL_MS = 750;
-const POLL_TIMEOUT_MS = 3 * 60 * 1000;
+const POLL_TIMEOUT_MS = 20 * 60 * 1000;
 const TERMINAL_STAGES = new Set([
   "GEMINI_TARGET_ACCOUNT_CONFIRMED",
   "GEMINI_TARGET_ACCOUNT_NOT_CONFIRMED",
