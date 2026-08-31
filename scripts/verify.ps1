@@ -14,7 +14,7 @@ $archiveName = "gemini-extension-agent-poc-v$($manifest.version).zip"
 $archivePath = Join-Path $projectRoot "public\downloads\$archiveName"
 
 if ($manifest.manifest_version -ne 3) { throw 'Manifest V3 is required.' }
-if ($manifest.version -ne '0.7.0') { throw 'Unexpected extension version.' }
+if ($manifest.version -ne '0.8.0') { throw 'Unexpected extension version.' }
 if ($manifest.incognito -ne 'spanning') { throw 'Spanning InPrivate execution is required.' }
 if ($manifest.permissions -notcontains 'nativeMessaging') { throw 'Native Messaging is required for the one-shot credential bridge.' }
 if ($manifest.permissions -notcontains 'storage') { throw 'Session-only state persistence is required for MV3 worker restarts.' }
@@ -23,15 +23,18 @@ if ($manifest.permissions -contains 'cookies' -or $manifest.permissions -contain
 if ($manifest.host_permissions -contains 'http://127.0.0.1/*') { throw 'The retired loopback protocol bridge must not be present.' }
 if ($manifest.host_permissions -notcontains 'https://identitytoolkit.googleapis.com/*') { throw 'Firebase Auth verification host is missing.' }
 if ($manifest.externally_connectable.matches -notcontains 'https://poc-after-sso-login-gemini.web.app/*') { throw 'Production Firebase origin is not allowlisted.' }
-if ($worker -notmatch 'PROTOCOL_VERSION = 7') { throw 'Worker protocol is stale.' }
-if ($content -notmatch 'version: 7') { throw 'Content script protocol is stale.' }
-if ($app -notmatch 'PROTOCOL_VERSION = 7') { throw 'Hosted app protocol is stale.' }
+if ($worker -notmatch 'PROTOCOL_VERSION = 8') { throw 'Worker protocol is stale.' }
+if ($content -notmatch 'version: 8') { throw 'Content script protocol is stale.' }
+if ($app -notmatch 'PROTOCOL_VERSION = 8') { throw 'Hosted app protocol is stale.' }
 if ($app -notmatch [regex]::Escape($expectedExtensionId)) { throw 'Hosted app extension ID mismatch.' }
 if ($worker -notmatch 'sendNativeMessage\(NATIVE_HOST') { throw 'Worker does not use the native bridge.' }
 if ($worker -notmatch 'incognito: true' -or $worker -notmatch 'state: "minimized"') { throw 'Worker must hide the isolated login window.' }
 if ($worker -notmatch 'GEMINI_TARGET_ACCOUNT_CONFIRMED') { throw 'Exact account confirmation gate is missing.' }
 if ($worker -notmatch 'POST_PROMPT' -or $app -notmatch 'POST_PROMPT') { throw 'Prompt handoff is missing.' }
-if ($app -notmatch 'accounts:signInWithPassword' -or $app -notmatch 'pocIdToken') { throw 'Hosted POC does not use Firebase password authentication.' }
+if ($app -match 'accounts:signInWithPassword' -or $html -match 'type=["'']password["'']') { throw 'Hosted POC exposes password authentication to the page.' }
+if ($app -notmatch 'AUTHENTICATE_POC' -or $app -notmatch 'pocIdToken') { throw 'Hosted POC does not delegate Firebase authentication to the extension.' }
+if ($html -notmatch 'value="O1234567"[^>]*readonly' -or $app -notmatch 'await launchGemini\(\)') { throw 'Single-click POC-to-Gemini flow is missing.' }
+if ($worker -notmatch 'accounts:signInWithPassword' -or $worker -notmatch 'getPocCredential') { throw 'Extension does not authenticate POC through the native bridge.' }
 if ($app -match 'LOGIN_DIGEST|crypto\.subtle') { throw 'Client-side digest login is forbidden.' }
 if ($worker -notmatch 'accounts:lookup' -or $worker -notmatch 'POC_AUTH_REQUIRED') { throw 'Extension does not verify Firebase authentication.' }
 if ($worker -notmatch 'isAllowedIncognitoAccess' -or $app -notmatch 'incognitoAccessAllowed') { throw 'InPrivate permission gate is missing.' }
@@ -44,9 +47,9 @@ if ($worker -notmatch 'chrome\.storage\.session') { throw 'MV3 run state must su
 if ($worker -notmatch 'AUTH_TIMEOUT' -or $worker -notmatch 'chrome\.alarms') { throw 'Stalled Google authentication must fail closed.' }
 if ($firebase.hosting.site -ne 'poc-after-sso-login-gemini') { throw 'Wrong Firebase Hosting site.' }
 if ($firebase.auth.providers.emailPassword -ne $true) { throw 'Firebase Email/Password authentication is not configured.' }
-if (($firebase.hosting.headers | ConvertTo-Json -Depth 20) -notmatch 'identitytoolkit\.googleapis\.com') { throw 'Firebase Auth endpoint is blocked by CSP.' }
+if (($firebase.hosting.headers | ConvertTo-Json -Depth 20) -match 'identitytoolkit\.googleapis\.com') { throw 'Hosted page must not connect directly to Firebase password authentication.' }
 if ($firebase.hosting.PSObject.Properties.Name -contains 'functions') { throw 'Firebase Functions are outside this static POC.' }
-if ($html -notmatch '/app.js\?v=0\.7\.0' -or $html -notmatch '/styles.css\?v=0\.7\.0') { throw 'Hosted assets are not cache-busted.' }
+if ($html -notmatch '/app.js\?v=0\.8\.0' -or $html -notmatch '/styles.css\?v=0\.8\.0') { throw 'Hosted assets are not cache-busted.' }
 if (-not (Test-Path -LiteralPath (Join-Path $projectRoot 'reference-agent\BrowserWorkerPool.cs'))) { throw 'Copied Agent reference is missing.' }
 if (Test-Path -LiteralPath (Join-Path $projectRoot 'package.json')) { throw 'Node runtime dependency is forbidden.' }
 if (-not (Test-Path -LiteralPath $archivePath)) { throw 'Packaged extension archive is missing.' }
@@ -99,6 +102,8 @@ Write-Output 'PASS hidden-inprivate-login-window'
 Write-Output 'PASS exact-account-confirmation-gate'
 Write-Output 'PASS prompt-handoff-after-confirmation'
 Write-Output 'PASS firebase-auth-gates-extension-agent'
+Write-Output 'PASS hosted-page-never-handles-password'
+Write-Output 'PASS single-click-poc-to-gemini-flow'
 Write-Output 'PASS inprivate-access-gate'
 Write-Output 'PASS mv3-session-state-recovery'
 Write-Output 'PASS stalled-authentication-timeout'

@@ -4,9 +4,9 @@
 
 ## Decision
 
-ใช้ Chromium MV3 Extension เป็น browser agent และใช้ Native Messaging host แบบ one-shot เป็นขอบเขตเดียวที่อ่าน Google credential จาก Windows Credential Manager
+ใช้ Chromium MV3 Extension เป็น browser agent และใช้ Native Messaging host แบบ one-shot เป็นขอบเขตเดียวที่อ่าน POC และ Google credentials จาก Windows Credential Manager
 
-หน้า Firebase ติดต่อ Native Messaging host โดยตรงไม่ได้ หน้าเว็บติดต่อเฉพาะ Extension ผ่าน `externally_connectable`; Extension เป็นผู้ตรวจ Firebase ID token, สร้าง InPrivate window, เรียก host, ควบคุม Google login document, ยืนยัน target account และ post prompt
+หน้า Firebase ติดต่อ Native Messaging host โดยตรงไม่ได้ หน้าเว็บติดต่อเฉพาะ Extension ผ่าน `externally_connectable`; Extension เป็นผู้ยืนยัน POC กับ Firebase, ตรวจ Firebase ID token, สร้าง InPrivate window, เรียก host, ควบคุม Google login document, ยืนยัน target account และ post prompt
 
 ## เหตุผล
 
@@ -17,16 +17,24 @@ Native Messaging ให้คุณสมบัติที่ POC ต้อง�
 - จำกัด caller ด้วย fixed Extension ID ใน host manifest
 - ใช้ length-prefixed stdin/stdout โดยไม่เปิด localhost port
 - process ถูกสร้างต่อ request และจบหลัง response เดียว
-- Google password ไม่อยู่ใน Firebase, Git, ZIP, browser storage หรือ command line
+- POC และ Google passwords ไม่อยู่ใน Firebase Hosting, Git, ZIP, browser storage หรือ command line
 - register ได้ใน HKCU ทั้ง Edge และ Chrome โดยไม่ต้อง admin หรือ reboot
 
 ## Authentication gates
 
-หน้า POC ใช้ Firebase Email/Password Authentication จริง `O1234567` ถูก map ไปยัง internal Firebase email หน้าเว็บเก็บเฉพาะ ID token แบบ session-scoped และล้าง password input หลัง request
+หน้า POC แสดง Employee ID `O1234567` แบบ read-only และไม่มี password field เมื่อผู้ใช้กด Login ครั้งเดียว Extension เรียก host เพื่ออ่าน `ESB.GeminiBroker.Poc.O1234567`, ใช้ password กับ Firebase Email/Password Authentication ภายใน service worker คืนเฉพาะ ID token ให้หน้าเว็บแบบ session-scoped และเริ่ม Gemini agent อัตโนมัติ
 
-Extension ไม่เชื่อ boolean จากหน้าเว็บ แต่ส่ง ID tokenไป `accounts:lookup` และยอมเริ่ม Agent เฉพาะ Firebase user ที่กำหนด จากนั้น request ถูกผูกกับ random UUID, InPrivate tab และ Firebase UID เดียวกัน Prompt submission ต้องยืนยัน ID token ซ้ำ
+Extension ไม่เชื่อ boolean จากหน้าเว็บ แต่ส่ง ID token ไป `accounts:lookup` และยอมเริ่ม Agent เฉพาะ Firebase user ที่กำหนด จากนั้น request ถูกผูกกับ random UUID, InPrivate tab และ Firebase UID เดียวกัน Prompt submission ต้องยืนยัน ID token ซ้ำ
 
-MV3 service worker อาจถูก suspend/restart ระหว่าง navigation จึง persist เฉพาะ whitelisted non-secret run metadata (`requestId`, tab/window IDs, stages, Firebase UID และ timestamps) ใน `chrome.storage.session` ค่า Firebase ID token และ Google credential ไม่ถูก persist และ session state ถูกล้างเมื่อ browser session จบ
+MV3 service worker อาจถูก suspend/restart ระหว่าง navigation จึง persist เฉพาะ whitelisted non-secret run metadata (`requestId`, tab/window IDs, stages, Firebase UID และ timestamps) ใน `chrome.storage.session` ค่า Firebase ID token, POC credential และ Google credential ไม่ถูก persist และ session state ถูกล้างเมื่อ browser session จบ
+
+## POC credential lifecycle
+
+1. Production page ส่งเฉพาะ Employee ID และ random request ID ไปยัง fixed Extension ID
+2. Extension รับเฉพาะ production origin/main frame และ exact Employee ID
+3. Native host อ่าน Generic Credential target `ESB.GeminiBroker.Poc.O1234567`
+4. Extension ส่ง password ไป Firebase Authentication โดยตรงและล้าง reference หลังสร้าง request
+5. หน้าเว็บได้รับเฉพาะ Firebase ID token; password ไม่ถูกใส่ใน DOM, page JavaScript, web storage หรือไฟล์
 
 ## Google credential lifecycle
 

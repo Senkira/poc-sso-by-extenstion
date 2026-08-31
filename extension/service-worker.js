@@ -1,13 +1,14 @@
 "use strict";
 
-const PROTOCOL_VERSION = 7;
+const PROTOCOL_VERSION = 8;
 const ALLOWED_ORIGIN = "https://poc-after-sso-login-gemini.web.app";
 const TARGET_EMAIL = "codeassist.04@easybuy.co.th";
 const LOGIN_URL = "https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fgemini.google.com%2Fapp&followup=https%3A%2F%2Fgemini.google.com%2Fapp";
 const NATIVE_HOST = "com.senkira.gemini_extension_agent";
 const FIREBASE_API_KEY = "AIzaSyBAmRwEIELh_AA7E1omzf8TrVV3Cp4HPFc";
 const POC_AUTH_EMAIL = "o1234567@poc.invalid";
-const SESSION_STATE_KEY = "geminiExtensionAgentV7";
+const POC_USERNAME = "O1234567";
+const SESSION_STATE_KEY = "geminiExtensionAgentV8";
 const RUN_TTL_MS = 10 * 60 * 1000;
 const AUTOMATION_RETRY_LIMIT = 60;
 const AUTOMATION_RETRY_MS = 500;
@@ -191,6 +192,74 @@ async function verifyPocIdToken(idToken) {
   return user.localId;
 }
 
+async function authenticatePoc(message) {
+  if (message.version !== PROTOCOL_VERSION
+      || !isRequestId(message.requestId)
+      || typeof message.username !== "string"
+      || message.username.trim().toUpperCase() !== POC_USERNAME) {
+    return { ok: false, error: "INVALID_POC_CREDENTIAL" };
+  }
+
+  let credential;
+  let result;
+  try {
+    credential = await chrome.runtime.sendNativeMessage(NATIVE_HOST, {
+      action: "getPocCredential",
+      requestId: message.requestId
+    });
+    if (credential?.ok !== true
+        || typeof credential.username !== "string"
+        || credential.username.toUpperCase() !== POC_USERNAME
+        || typeof credential.password !== "string"
+        || credential.password.length === 0) {
+      throw new Error("POC_CREDENTIAL_BRIDGE_FAILED");
+    }
+
+    const response = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(FIREBASE_API_KEY)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: POC_AUTH_EMAIL,
+          password: credential.password,
+          returnSecureToken: true
+        })
+      }
+    );
+    credential.password = "";
+    credential = null;
+    result = await response.json();
+    if (!response.ok
+        || typeof result.idToken !== "string"
+        || result.email?.toLowerCase() !== POC_AUTH_EMAIL) {
+      throw new Error("INVALID_POC_CREDENTIAL");
+    }
+    await verifyPocIdToken(result.idToken);
+    const expiresIn = Number(result.expiresIn);
+    const idToken = result.idToken;
+    if (typeof result.refreshToken === "string") result.refreshToken = "";
+    result.idToken = "";
+    result = null;
+    return {
+      ok: true,
+      idToken,
+      expiresIn: Number.isFinite(expiresIn) ? expiresIn : 3600,
+      username: POC_USERNAME
+    };
+  } catch (error) {
+    if (credential?.password) credential.password = "";
+    credential = null;
+    if (result?.refreshToken) result.refreshToken = "";
+    if (result?.idToken) result.idToken = "";
+    result = null;
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "POC_CREDENTIAL_BRIDGE_FAILED"
+    };
+  }
+}
+
 async function startAgent(message) {
   try {
     await ensureStateReady();
@@ -356,7 +425,7 @@ function submitPassword(targetEmail, password) {
 
 async function fetchOneShotCredential(run) {
   const payload = await chrome.runtime.sendNativeMessage(NATIVE_HOST, {
-    action: "getCredential",
+    action: "getGoogleCredential",
     requestId: run.requestId
   });
   if (payload?.ok !== true
@@ -549,10 +618,11 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
     return false;
   }
   const task = message?.type === "PING" ? pingExtension()
-    : message?.type === "START_AGENT" ? startAgent(message)
-      : message?.type === "GET_STATUS" ? getStatus(message)
-        : message?.type === "POST_PROMPT" ? postPrompt(message)
-          : Promise.resolve({ ok: false, error: "UNKNOWN_MESSAGE" });
+    : message?.type === "AUTHENTICATE_POC" ? authenticatePoc(message)
+      : message?.type === "START_AGENT" ? startAgent(message)
+        : message?.type === "GET_STATUS" ? getStatus(message)
+          : message?.type === "POST_PROMPT" ? postPrompt(message)
+            : Promise.resolve({ ok: false, error: "UNKNOWN_MESSAGE" });
   task.then(sendResponse).catch((error) => sendResponse({
     ok: false, error: error instanceof Error ? error.message : "EXTENSION_ERROR"
   }));

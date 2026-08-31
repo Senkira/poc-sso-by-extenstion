@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
   [string]$InstallDirectory = (Join-Path $env:LOCALAPPDATA 'GeminiExtensionAgentPoc'),
-  [string]$CredentialTarget = 'ESB.GeminiBroker.CodeAssist04'
+  [string]$GoogleCredentialTarget = 'ESB.GeminiBroker.CodeAssist04',
+  [string]$PocCredentialTarget = 'ESB.GeminiBroker.Poc.O1234567'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,8 +19,10 @@ if (-not (Test-Path -LiteralPath $sourcePath)) {
   throw 'NativeHost.cs is missing.'
 }
 $credentialList = cmdkey.exe /list 2>$null | Out-String
-if ($credentialList -notmatch [regex]::Escape($CredentialTarget)) {
-  throw "Windows Credential Manager target '$CredentialTarget' is missing."
+foreach ($credentialTarget in @($GoogleCredentialTarget, $PocCredentialTarget)) {
+  if ($credentialList -notmatch [regex]::Escape($credentialTarget)) {
+    throw "Windows Credential Manager target '$credentialTarget' is missing."
+  }
 }
 
 New-Item -ItemType Directory -Path $InstallDirectory -Force | Out-Null
@@ -57,5 +60,6 @@ foreach ($registryPath in $registryPaths) {
 Write-Output 'PASS native-host-compiled'
 Write-Output 'PASS native-host-registered-edge'
 Write-Output 'PASS native-host-registered-chrome'
-Write-Output 'PASS credential-target-present'
+Write-Output 'PASS google-credential-target-present'
+Write-Output 'PASS poc-credential-target-present'
 Write-Output "Host: $hostPath"

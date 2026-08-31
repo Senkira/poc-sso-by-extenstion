@@ -8,7 +8,8 @@ using System.Web.Script.Serialization;
 
 internal static class Program
 {
-    private const string CredentialTarget = "ESB.GeminiBroker.CodeAssist04";
+    private const string GoogleCredentialTarget = "ESB.GeminiBroker.CodeAssist04";
+    private const string PocCredentialTarget = "ESB.GeminiBroker.Poc.O1234567";
     private const int MaximumMessageBytes = 65536;
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -60,19 +61,36 @@ internal static class Program
                 string action = request != null && request.TryGetValue("action", out actionValue) ? actionValue as string : null;
                 string requestId = request != null && request.TryGetValue("requestId", out requestIdValue) ? requestIdValue as string : null;
                 Guid parsedRequestId;
-                if (!String.Equals(action, "getCredential", StringComparison.Ordinal)
-                    || !Guid.TryParse(requestId, out parsedRequestId))
+                if (!Guid.TryParse(requestId, out parsedRequestId))
                 {
                     throw new InvalidOperationException("Invalid native message request.");
                 }
 
-                string[] credential = ReadCredential(CredentialTarget);
-                string response = serializer.Serialize(new Dictionary<string, object>
+                string credentialTarget;
+                string identityField;
+                if (String.Equals(action, "getGoogleCredential", StringComparison.Ordinal))
+                {
+                    credentialTarget = GoogleCredentialTarget;
+                    identityField = "email";
+                }
+                else if (String.Equals(action, "getPocCredential", StringComparison.Ordinal))
+                {
+                    credentialTarget = PocCredentialTarget;
+                    identityField = "username";
+                }
+                else
+                {
+                    throw new InvalidOperationException("Invalid native message request.");
+                }
+
+                string[] credential = ReadCredential(credentialTarget);
+                Dictionary<string, object> responsePayload = new Dictionary<string, object>
                 {
                     { "ok", true },
-                    { "email", credential[0] },
                     { "password", credential[1] }
-                });
+                };
+                responsePayload.Add(identityField, credential[0]);
+                string response = serializer.Serialize(responsePayload);
                 WriteMessage(output, response);
                 credential[0] = null;
                 credential[1] = null;

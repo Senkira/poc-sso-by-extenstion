@@ -17,7 +17,7 @@ function element() {
 }
 
 const selectors = [
-  "#login-panel", "#launcher-panel", "#login-form", "#username", "#password",
+  "#login-panel", "#launcher-panel", "#login-form", "#username",
   "#login-button", "#logout-button", "#login-error", "#connection-badge",
   "#connection-detail", "#launch-button", "#retry-button", "#prompt",
   "#prompt-button", "#request-value", "#stage-value", "#origin-value",
@@ -28,7 +28,6 @@ const stored = new Map();
 const idToken = "firebase-id-token".padEnd(160, "x");
 const requestId = "123e4567-e89b-42d3-a456-426614174000";
 const messages = [];
-let fetchCount = 0;
 
 const sessionStorage = {
   getItem(key) { return stored.has(key) ? stored.get(key) : null; },
@@ -45,11 +44,16 @@ const chrome = {
       if (message.type === "PING") {
         callback({
           ok: true,
-          version: "0.7.0",
-          protocolVersion: 7,
+          version: "0.8.0",
+          protocolVersion: 8,
           capability: "EXTENSION_AGENT_ONE_SHOT_BRIDGE",
           incognitoAccessAllowed: true
         });
+        return;
+      }
+      if (message.type === "AUTHENTICATE_POC") {
+        assert.equal(message.username, "O1234567");
+        callback({ ok: true, idToken, expiresIn: 3600, username: "O1234567" });
         return;
       }
       assert.equal(message.pocIdToken, idToken);
@@ -95,24 +99,6 @@ const context = {
   crypto: { randomUUID: () => requestId },
   document: { querySelector: (selector) => elements.get(selector) },
   sessionStorage,
-  fetch: async (url, options) => {
-    fetchCount += 1;
-    assert.match(url, /accounts:signInWithPassword/);
-    const body = JSON.parse(options.body);
-    assert.equal(body.email, "o1234567@poc.invalid");
-    assert.equal(body.password, "test-password");
-    return {
-      ok: true,
-      async json() {
-        return {
-          idToken,
-          refreshToken: "discard-me",
-          email: "o1234567@poc.invalid",
-          expiresIn: "3600"
-        };
-      }
-    };
-  },
   setTimeout(callback) { timerId += 1; timers.set(timerId, callback); return timerId; },
   clearTimeout(id) { timers.delete(id); },
   URL,
@@ -136,19 +122,14 @@ async function main() {
   assert.equal(elements.get("#launcher-panel").hidden, true);
 
   elements.get("#username").value = "O1234567";
-  elements.get("#password").value = "test-password";
   elements.get("#login-form").listeners.submit({ preventDefault() {} });
   await flush();
 
-  assert.equal(fetchCount, 1);
+  assert.equal(messages[0].type, "AUTHENTICATE_POC");
   assert.equal(stored.get("poc-firebase-id-token"), idToken);
-  assert.equal(elements.get("#password").value, "");
   assert.equal(elements.get("#login-panel").hidden, true);
   assert.equal(elements.get("#launcher-panel").hidden, false);
   assert.equal(elements.get("#connection-badge").textContent, "Connected");
-
-  elements.get("#launch-button").listeners.click();
-  await flush();
   assert.equal(messages.some((message) => message.type === "START_AGENT"), true);
   assert.equal(elements.get("#account-value").textContent, "Confirmed");
   assert.equal(elements.get("#prompt-button").disabled, false);
@@ -164,9 +145,10 @@ async function main() {
   assert.equal(elements.get("#login-panel").hidden, false);
   assert.equal(elements.get("#launcher-panel").hidden, true);
 
-  console.log("PASS firebase-login-replaces-client-digest");
+  console.log("PASS firebase-login-runs-through-extension-native-bridge");
   console.log("PASS firebase-token-gates-extension-start-and-prompt");
-  console.log("PASS password-field-cleared-after-login");
+  console.log("PASS hosted-page-has-no-password-field");
+  console.log("PASS single-login-click-starts-gemini-agent");
   console.log("PASS poc-logout-clears-session-token");
 }
 

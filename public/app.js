@@ -1,12 +1,10 @@
 "use strict";
 
 const EXTENSION_ID = "jeenmgigpkffleijbmfciffiodlcdafh";
-const REQUIRED_EXTENSION_VERSION = "0.7.0";
-const PROTOCOL_VERSION = 7;
+const REQUIRED_EXTENSION_VERSION = "0.8.0";
+const PROTOCOL_VERSION = 8;
 const CAPABILITY = "EXTENSION_AGENT_ONE_SHOT_BRIDGE";
-const FIREBASE_API_KEY = "AIzaSyBAmRwEIELh_AA7E1omzf8TrVV3Cp4HPFc";
 const POC_USERNAME = "O1234567";
-const POC_AUTH_EMAIL = "o1234567@poc.invalid";
 const AUTH_TOKEN_KEY = "poc-firebase-id-token";
 const AUTH_EXPIRY_KEY = "poc-firebase-id-token-expiry";
 const POLL_INTERVAL_MS = 750;
@@ -30,7 +28,6 @@ const elements = {
   launcherPanel: document.querySelector("#launcher-panel"),
   loginForm: document.querySelector("#login-form"),
   username: document.querySelector("#username"),
-  password: document.querySelector("#password"),
   loginButton: document.querySelector("#login-button"),
   logoutButton: document.querySelector("#logout-button"),
   loginError: document.querySelector("#login-error"),
@@ -97,14 +94,12 @@ function getPocIdToken() {
   return authState.idToken;
 }
 
-function showAuthenticatedState() {
+function showAuthenticatedState(checkConnection = true) {
   const loggedIn = authState !== null && authState.expiresAt > Date.now();
   elements.loginPanel.hidden = loggedIn;
   elements.launcherPanel.hidden = !loggedIn;
-  if (loggedIn) {
+  if (loggedIn && checkConnection) {
     void checkExtension();
-  } else {
-    elements.password.value = "";
   }
 }
 
@@ -112,28 +107,19 @@ async function handleLogin(event) {
   event.preventDefault();
   elements.loginError.textContent = "";
   const username = elements.username.value.trim();
-  let password = elements.password.value;
   if (username.toUpperCase() !== POC_USERNAME) {
-    elements.password.value = "";
-    elements.loginError.textContent = "ชื่อผู้ใช้หรือรหัสผ่าน POC ไม่ถูกต้อง";
+    elements.loginError.textContent = "ชื่อผู้ใช้ POC ไม่ถูกต้อง";
     return;
   }
   elements.loginButton.disabled = true;
   try {
-    const response = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(FIREBASE_API_KEY)}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: POC_AUTH_EMAIL, password, returnSecureToken: true })
-      }
-    );
-    const result = await response.json();
-    password = "";
-    elements.password.value = "";
-    if (!response.ok
-        || typeof result.idToken !== "string"
-        || result.email?.toLowerCase() !== POC_AUTH_EMAIL) {
+    const result = await sendToExtension({
+      type: "AUTHENTICATE_POC",
+      version: PROTOCOL_VERSION,
+      requestId: crypto.randomUUID(),
+      username
+    });
+    if (!result?.ok || typeof result.idToken !== "string") {
       throw new Error("INVALID_POC_CREDENTIAL");
     }
     const expiresInSeconds = Number(result.expiresIn);
@@ -141,13 +127,14 @@ async function handleLogin(event) {
     authState = { idToken: result.idToken, expiresAt };
     sessionStorage.setItem(AUTH_TOKEN_KEY, authState.idToken);
     sessionStorage.setItem(AUTH_EXPIRY_KEY, String(authState.expiresAt));
-    if (typeof result.refreshToken === "string") result.refreshToken = "";
-    showAuthenticatedState();
+    result.idToken = "";
+    showAuthenticatedState(false);
+    if (await checkExtension()) {
+      await launchGemini();
+    }
   } catch {
-    password = "";
-    elements.password.value = "";
     clearPocSession();
-    elements.loginError.textContent = "ชื่อผู้ใช้หรือรหัสผ่าน POC ไม่ถูกต้อง";
+    elements.loginError.textContent = "ยืนยัน POC ผ่าน Extension ไม่สำเร็จ";
   } finally {
     elements.loginButton.disabled = false;
   }
@@ -200,15 +187,17 @@ async function checkExtension() {
         || response.version !== REQUIRED_EXTENSION_VERSION
         || response.capability !== CAPABILITY) {
       setConnection(false, `ต้อง Reload Gemini Extension Agent v${REQUIRED_EXTENSION_VERSION}`);
-      return;
+      return false;
     }
     if (response.incognitoAccessAllowed !== true) {
       setConnection(false, "พบ Extension แล้ว แต่ต้องเปิด Allow in InPrivate/Incognito ก่อนใช้งาน");
-      return;
+      return false;
     }
     setConnection(true, `เชื่อมต่อ Gemini Extension Agent v${response.version} แล้ว`);
+    return true;
   } catch {
     setConnection(false, "ไม่พบ extension ที่ติดตั้งและอนุญาตสำหรับเว็บนี้");
+    return false;
   }
 }
 

@@ -27,9 +27,12 @@ const chrome = {
     isAllowedIncognitoAccess(callback) { callback(true); }
   },
   runtime: {
-    getManifest() { return { version: "0.7.0" }; },
+    getManifest() { return { version: "0.8.0" }; },
     async sendNativeMessage(host, message) {
       nativeMessages.push({ host, message });
+      if (message.action === "getPocCredential") {
+        return { ok: true, username: "O1234567", password: "test-poc-password" };
+      }
       return { ok: true, email: "codeassist.04@easybuy.co.th", password: "test-only-password" };
     },
     onMessageExternal: event("external"),
@@ -79,6 +82,22 @@ const context = {
   Error,
   encodeURIComponent,
   async fetch(url, options) {
+    if (/accounts:signInWithPassword/.test(url)) {
+      const body = JSON.parse(options.body);
+      assert.equal(body.email, "o1234567@poc.invalid");
+      assert.equal(body.password, "test-poc-password");
+      return {
+        ok: true,
+        async json() {
+          return {
+            idToken: pocIdToken,
+            refreshToken: "discard-me",
+            email: "o1234567@poc.invalid",
+            expiresIn: "3600"
+          };
+        }
+      };
+    }
     assert.match(url, /identitytoolkit\.googleapis\.com\/v1\/accounts:lookup/);
     assert.equal(JSON.parse(options.body).idToken, pocIdToken);
     return {
@@ -111,18 +130,26 @@ async function flush(rounds = 8) {
 }
 
 async function main() {
-  const ping = await external({ type: "PING", version: 7 });
-  assert.equal(ping.version, "0.7.0");
-  assert.equal(ping.protocolVersion, 7);
+  const ping = await external({ type: "PING", version: 8 });
+  assert.equal(ping.version, "0.8.0");
+  assert.equal(ping.protocolVersion, 8);
   assert.equal(ping.capability, "EXTENSION_AGENT_ONE_SHOT_BRIDGE");
   assert.equal(ping.incognitoAccessAllowed, true);
 
   const requestId = "123e4567-e89b-42d3-a456-426614174000";
-  const denied = await external({ type: "START_AGENT", version: 7, requestId });
+  const pocLogin = await external({
+    type: "AUTHENTICATE_POC", version: 8, requestId, username: "O1234567"
+  });
+  assert.equal(pocLogin.ok, true);
+  assert.equal(pocLogin.idToken, pocIdToken);
+  assert.equal(Object.prototype.hasOwnProperty.call(pocLogin, "password"), false);
+  assert.equal(nativeMessages[0].message.action, "getPocCredential");
+
+  const denied = await external({ type: "START_AGENT", version: 8, requestId });
   assert.equal(denied.error, "POC_AUTH_REQUIRED");
   assert.equal(createdWindows.length, 0);
 
-  const started = await external({ type: "START_AGENT", version: 7, requestId, pocIdToken });
+  const started = await external({ type: "START_AGENT", version: 8, requestId, pocIdToken });
   assert.equal(started.ok, true);
   assert.equal(createdWindows.length, 1);
   assert.equal(createdWindows[0].incognito, true);
@@ -138,20 +165,21 @@ async function main() {
     url: "https://accounts.google.com/v3/signin/challenge/pwd"
   });
   await flush();
-  let status = await external({ type: "GET_STATUS", version: 7, requestId });
+  let status = await external({ type: "GET_STATUS", version: 8, requestId });
   assert.equal(status.run.stage, "PASSWORD_SUBMITTED");
   assert.equal(status.run.credentialDelivered, true);
   assert.equal(Object.prototype.hasOwnProperty.call(status.run, "password"), false);
-  assert.equal(nativeMessages.length, 1);
-  assert.equal(nativeMessages[0].host, "com.senkira.gemini_extension_agent");
+  assert.equal(nativeMessages.length, 2);
+  assert.equal(nativeMessages[1].host, "com.senkira.gemini_extension_agent");
+  assert.equal(nativeMessages[1].message.action, "getGoogleCredential");
   assert.equal(createdAlarms[0].name, `gemini-auth-timeout:${requestId}`);
 
   listeners.committed({ frameId: 0, tabId: 81, url: "https://gemini.google.com/app" });
   await internal(
-    { type: "GEMINI_DOCUMENT_SIGNAL", version: 7, targetAccountObserved: true, identityCheckComplete: true },
+    { type: "GEMINI_DOCUMENT_SIGNAL", version: 8, targetAccountObserved: true, identityCheckComplete: true },
     { frameId: 0, url: "https://gemini.google.com/app", tab: { id: 81, incognito: true } }
   );
-  status = await external({ type: "GET_STATUS", version: 7, requestId });
+  status = await external({ type: "GET_STATUS", version: 8, requestId });
   assert.equal(status.run.stage, "GEMINI_TARGET_ACCOUNT_CONFIRMED");
   assert.equal(status.run.targetAccountConfirmed, true);
   assert.equal(updatedWindows[0].id, 71);
@@ -160,13 +188,13 @@ async function main() {
   assert.equal(clearedAlarms.includes(`gemini-auth-timeout:${requestId}`), true);
 
   const posted = await external({
-    type: "POST_PROMPT", version: 7, requestId, pocIdToken, prompt: "POC test"
+    type: "POST_PROMPT", version: 8, requestId, pocIdToken, prompt: "POC test"
   });
   assert.equal(posted.ok, true);
   assert.equal(posted.run.stage, "PROMPT_SUBMITTED");
 
   const rejected = await external(
-    { type: "PING", version: 7 },
+    { type: "PING", version: 8 },
     { frameId: 0, url: "https://example.com/" }
   );
   assert.equal(rejected.error, "UNTRUSTED_SENDER");
@@ -178,21 +206,21 @@ async function main() {
 
   googleStep = "USER_ACTION_REQUIRED";
   const challengeId = "123e4567-e89b-42d3-a456-426614174001";
-  await external({ type: "START_AGENT", version: 7, requestId: challengeId, pocIdToken });
+  await external({ type: "START_AGENT", version: 8, requestId: challengeId, pocIdToken });
   listeners.completed({ frameId: 0, tabId: 81, url: "https://accounts.google.com/v3/signin/challenge/otp" });
   await flush();
-  const challenged = await external({ type: "GET_STATUS", version: 7, requestId: challengeId });
+  const challenged = await external({ type: "GET_STATUS", version: 8, requestId: challengeId });
   assert.equal(challenged.run.stage, "USER_ACTION_REQUIRED");
   assert.equal(removedWindows.includes(71), true);
 
   googleStep = "PASSWORD_REQUIRED";
   const timeoutId = "123e4567-e89b-42d3-a456-426614174002";
-  await external({ type: "START_AGENT", version: 7, requestId: timeoutId, pocIdToken });
+  await external({ type: "START_AGENT", version: 8, requestId: timeoutId, pocIdToken });
   listeners.completed({ frameId: 0, tabId: 81, url: "https://accounts.google.com/v3/signin/challenge/pwd" });
   await flush();
   listeners.alarm({ name: `gemini-auth-timeout:${timeoutId}` });
   await flush();
-  const timedOut = await external({ type: "GET_STATUS", version: 7, requestId: timeoutId });
+  const timedOut = await external({ type: "GET_STATUS", version: 8, requestId: timeoutId });
   assert.equal(timedOut.run.stage, "AUTH_TIMEOUT");
   assert.equal(timedOut.run.closed, true);
 
@@ -203,6 +231,7 @@ async function main() {
   console.log("PASS interactive-challenge-fails-closed");
   console.log("PASS untrusted-origin-rejection");
   console.log("PASS firebase-auth-gates-agent-start-and-prompt");
+  console.log("PASS poc-password-never-enters-hosted-page");
   console.log("PASS mv3-worker-restart-restores-non-secret-run-state");
   console.log("PASS stalled-password-submit-fails-closed");
 }
