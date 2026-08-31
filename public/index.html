@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light dark">
     <title>Gemini Extension Agent POC</title>
-    <link rel="stylesheet" href="/styles.css?v=0.10.0">
-    <script src="/app.js?v=0.10.0" defer></script>
+    <link rel="stylesheet" href="/styles.css?v=0.10.1">
+    <script src="/app.js?v=0.10.1" defer></script>
   </head>
   <body>
     <main class="shell">
@@ -25,6 +25,14 @@
           <label for="username">Username</label>
           <input id="username" name="username" value="O1234567" autocomplete="username" readonly required>
           <p class="notice">กดครั้งเดียว: Extension ยืนยัน Firebase ผ่าน one-shot native bridge แล้วเริ่ม Gemini อัตโนมัติ</p>
+          <div class="status-row">
+            <div>
+              <p class="label">Extension preflight</p>
+              <p id="preflight-detail">กำลังตรวจสอบ Extension…</p>
+            </div>
+            <span id="preflight-badge" class="badge pending">Checking</span>
+          </div>
+          <button id="preflight-button" class="secondary" type="button">ตรวจ Extension อีกครั้ง</button>
           <button id="login-button" type="submit">Login และเปิด Gemini</button>
           <p id="login-error" class="notice" role="alert"></p>
         </form>

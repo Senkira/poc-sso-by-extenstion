@@ -36,6 +36,9 @@ const elements = {
   loginForm: document.querySelector("#login-form"),
   username: document.querySelector("#username"),
   loginButton: document.querySelector("#login-button"),
+  preflightButton: document.querySelector("#preflight-button"),
+  preflightBadge: document.querySelector("#preflight-badge"),
+  preflightDetail: document.querySelector("#preflight-detail"),
   logoutButton: document.querySelector("#logout-button"),
   loginError: document.querySelector("#login-error"),
   connectionBadge: document.querySelector("#connection-badge"),
@@ -169,6 +172,9 @@ function setConnection(connected, detail) {
   elements.connectionBadge.textContent = connected ? "Connected" : "Not detected";
   elements.connectionBadge.className = `badge ${connected ? "ok" : "error"}`;
   elements.connectionDetail.textContent = detail;
+  elements.preflightBadge.textContent = connected ? "Connected" : "Not detected";
+  elements.preflightBadge.className = `badge ${connected ? "ok" : "error"}`;
+  elements.preflightDetail.textContent = detail;
   elements.launchButton.disabled = !connected;
 }
 
@@ -317,8 +323,10 @@ async function submitPrompt() {
 }
 
 elements.loginForm.addEventListener("submit", (event) => { void handleLogin(event); });
+elements.preflightButton.addEventListener("click", () => { void checkExtension(); });
 elements.logoutButton.addEventListener("click", () => { void handleLogout(); });
 elements.launchButton.addEventListener("click", () => { void launchGemini(); });
 elements.retryButton.addEventListener("click", () => { void checkExtension(); });
 elements.promptButton.addEventListener("click", () => { void submitPrompt(); });
 showAuthenticatedState();
+if (authState === null) void checkExtension();

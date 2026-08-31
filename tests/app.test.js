@@ -18,7 +18,8 @@ function element() {
 
 const selectors = [
   "#login-panel", "#launcher-panel", "#login-form", "#username",
-  "#login-button", "#logout-button", "#login-error", "#connection-badge",
+  "#login-button", "#preflight-button", "#preflight-badge", "#preflight-detail",
+  "#logout-button", "#login-error", "#connection-badge",
   "#connection-detail", "#launch-button", "#retry-button", "#prompt",
   "#prompt-button", "#request-value", "#stage-value", "#origin-value",
   "#credential-value", "#account-value", "#note-value", "#extension-id"
@@ -122,14 +123,17 @@ async function flush(rounds = 6) {
 }
 
 async function main() {
+  await flush();
   assert.equal(elements.get("#login-panel").hidden, false);
   assert.equal(elements.get("#launcher-panel").hidden, true);
   assert.equal(elements.get("#username").value, "O1234567");
+  assert.equal(elements.get("#preflight-badge").textContent, "Connected");
+  assert.match(elements.get("#preflight-detail").textContent, /0\.10\.0/);
 
   elements.get("#login-form").listeners.submit({ preventDefault() {} });
   await flush();
 
-  assert.equal(messages[0].type, "AUTHENTICATE_POC");
+  assert.equal(messages.some((message) => message.type === "AUTHENTICATE_POC"), true);
   assert.equal(stored.get("poc-firebase-id-token"), idToken);
   assert.equal(elements.get("#login-panel").hidden, true);
   assert.equal(elements.get("#launcher-panel").hidden, false);
