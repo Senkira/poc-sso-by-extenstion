@@ -1,9 +1,9 @@
 $ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$manifest = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'browser-extension\manifest.json') | ConvertFrom-Json
-$worker = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'browser-extension\service-worker.js')
-$content = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'browser-extension\content-script.js')
+$manifest = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'extension\manifest.json') | ConvertFrom-Json
+$worker = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'extension\service-worker.js')
+$content = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'extension\content-script.js')
 $app = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'frontend-web\app.js')
 $html = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'frontend-web\index.html')
 $broker = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'backend-api\index.js')
@@ -59,7 +59,7 @@ if (-not (Test-Path -LiteralPath $archivePath)) { throw 'Packaged extension arch
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [IO.Compression.ZipFile]::OpenRead($archivePath)
 try {
-  $expectedEntries = @('browser-extension/content-script.js', 'browser-extension/manifest.json', 'browser-extension/service-worker.js')
+  $expectedEntries = @('extension/content-script.js', 'extension/manifest.json', 'extension/service-worker.js')
   $actualEntries = @($archive.Entries | Where-Object { -not [string]::IsNullOrEmpty($_.Name) } | ForEach-Object { $_.FullName.Replace('\', '/') } | Sort-Object)
   if (($actualEntries -join '|') -ne (($expectedEntries | Sort-Object) -join '|')) { throw 'Extension archive contains unexpected files.' }
   foreach ($entryName in $expectedEntries) {

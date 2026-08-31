@@ -12,7 +12,7 @@ Production URL: <https://poc-after-sso-login-gemini.web.app/>
 | --- | --- | --- |
 | Frontend Web | `frontend-web/` | Firebase Hosting / browser tab ปกติ |
 | Backend API | `backend-api/` | Firebase Functions v2 บน GCP |
-| Edge/Chrome Extension | `browser-extension/` | Manifest V3 service worker และ content script |
+| Edge/Chrome Extension | `extension/` | Manifest V3 service worker และ content script |
 | Automated tests | `tests/` และ `backend-api/test/` | Development/CI เท่านั้น |
 | Legacy reference | `docs/legacy-reference-agent/` | เอกสารอ้างอิง ไม่ถูก build หรือ deploy |
 
@@ -28,7 +28,7 @@ poc-sso-by-extenstion/
 │   ├── broker-core.js        # Request schema, origin/token helpers, constants
 │   ├── package.json          # Cloud runtime/dependencies
 │   └── test/                 # Backend unit tests
-├── browser-extension/        # Agent ที่ติดตั้งใน Edge/Chrome
+├── extension/                # Agent ที่ติดตั้งใน Edge/Chrome (คง path เดิมเพื่อให้ Load unpacked ไม่หลุด)
 │   ├── manifest.json         # Permissions, fixed ID, allowed web origin
 │   ├── service-worker.js     # Process หลัก: auth, broker, isolate, Google automation
 │   └── content-script.js     # ตรวจ account บน Gemini document
@@ -46,7 +46,7 @@ sequenceDiagram
     actor User
     participant Web as Firebase Hosting<br/>frontend-web/app.js
     participant Edge as Edge extension router<br/>chrome.runtime
-    participant SW as Extension service worker<br/>browser-extension/service-worker.js
+    participant SW as Extension service worker<br/>extension/service-worker.js
     participant API as credentialBroker<br/>backend-api/index.js
     participant Auth as Firebase Auth<br/>Identity Toolkit
     participant SM as GCP Secret Manager
@@ -93,10 +93,10 @@ sequenceDiagram
 
 Edge ใช้ Chromium Extension API จึงเรียก namespace `chrome.*` เหมือน Chrome แม้ตัว browser จะเป็น Microsoft Edge การเชื่อมต่อไม่ได้ใช้ localhost, custom protocol, Native Messaging หรือ PowerShell แต่ใช้ extension routing ภายใน browser ดังนี้:
 
-1. `browser-extension/manifest.json` มี `key` คงที่ ทำให้ build แบบ unpacked ได้ Extension ID คงที่ `jeenmgigpkffleijbmfciffiodlcdafh`
+1. `extension/manifest.json` มี `key` คงที่ ทำให้ build แบบ unpacked ได้ Extension ID คงที่ `jeenmgigpkffleijbmfciffiodlcdafh`
 2. `externally_connectable.matches` อนุญาตเฉพาะ `https://poc-after-sso-login-gemini.web.app/*`
 3. `frontend-web/app.js/sendToExtension(message)` เรียก `chrome.runtime.sendMessage(EXTENSION_ID, message, callback)`
-4. Edge หา Extension จาก ID แล้วส่ง message เข้า `chrome.runtime.onMessageExternal` ใน `browser-extension/service-worker.js`
+4. Edge หา Extension จาก ID แล้วส่ง message เข้า `chrome.runtime.onMessageExternal` ใน `extension/service-worker.js`
 5. `isAllowedExternalSender(sender)` ตรวจ origin ของ sender ซ้ำก่อน dispatch ไปยัง `pingExtension`, `authenticatePoc`, `startAgent`, `getStatus`, `postPrompt` หรือ `cancelRun`
 
 ดังนั้นเครื่องใหม่ต้องติดตั้ง Extension ที่ใช้ manifest key เดิมและเปิด Allow in InPrivate/Incognito ถ้าเปลี่ยน manifest key หรือ Extension ID ต้องแก้ทั้ง `EXTENSION_ID` ใน `frontend-web/app.js` และ `EXTENSION_ORIGIN`/CORS ใน backend ให้ตรงกัน
@@ -159,7 +159,7 @@ Backend ทำงานตามลำดับ `validateCredentialRequest()` �
 
 1. ดาวน์โหลด `gemini-extension-agent-poc-v0.13.2.zip` จากหน้า Production แล้วแตกไฟล์
 2. เปิด `edge://extensions` หรือ `chrome://extensions`
-3. เปิด Developer mode แล้วเลือก Load unpacked ที่โฟลเดอร์ `browser-extension`
+3. เปิด Developer mode แล้วเลือก Load unpacked ที่โฟลเดอร์ `extension`
 4. เปิด Details และเปิด Allow in InPrivate/Incognito หนึ่งครั้ง
 5. กลับหน้า Production และตรวจว่าแสดง `Connected`
 

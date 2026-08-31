@@ -86,7 +86,7 @@ const context = vm.createContext({
   clearTimeout() {},
   document: null
 });
-vm.runInContext(fs.readFileSync("browser-extension/service-worker.js", "utf8"), context);
+vm.runInContext(fs.readFileSync("extension/service-worker.js", "utf8"), context);
 
 async function main() {
   const targetEmail = "codeassist.04@easybuy.co.th";

@@ -48,7 +48,7 @@ async function runScenario({ readyState, initiallyVisible, unrelated = false, mu
   };
 
   vm.runInNewContext(
-    fs.readFileSync("browser-extension/content-script.js", "utf8"),
+    fs.readFileSync("extension/content-script.js", "utf8"),
     {
       chrome,
       document,

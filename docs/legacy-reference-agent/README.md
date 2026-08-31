@@ -6,4 +6,4 @@ Runtime ปัจจุบันมีเพียง:
 
 - `frontend-web/` — Firebase Hosting
 - `backend-api/` — Firebase Functions v2
-- `browser-extension/` — Edge/Chrome Manifest V3 Extension
+- `extension/` — Edge/Chrome Manifest V3 Extension
