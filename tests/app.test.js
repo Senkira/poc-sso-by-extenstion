@@ -45,9 +45,9 @@ const chrome = {
       if (message.type === "PING") {
         callback({
           ok: true,
-          version: "0.12.3",
-          protocolVersion: 9,
-          capability: "EXTENSION_AGENT_ONE_SHOT_BRIDGE",
+          version: "0.13.0",
+          protocolVersion: 10,
+          capability: "EXTENSION_AGENT_HTTPS_BROKER",
           incognitoAccessAllowed: true
         });
         return;
@@ -113,7 +113,7 @@ async function main() {
   assert.equal(elements.get("#launcher-panel").hidden, true);
   assert.equal(elements.get("#username").value, "O1234567");
   assert.equal(elements.get("#preflight-badge").textContent, "Connected");
-  assert.match(elements.get("#preflight-detail").textContent, /0\.12\.3/);
+  assert.match(elements.get("#preflight-detail").textContent, /0\.13\.0/);
 
   elements.get("#login-form").listeners.submit({ preventDefault() {} });
   await flush();
@@ -133,7 +133,7 @@ async function main() {
   assert.equal(elements.get("#login-panel").hidden, false);
   assert.equal(elements.get("#launcher-panel").hidden, true);
 
-  console.log("PASS firebase-login-runs-through-extension-native-bridge");
+  console.log("PASS firebase-login-runs-through-extension-https-broker");
   console.log("PASS firebase-token-gates-extension-start");
   console.log("PASS hosted-page-has-no-password-field");
   console.log("PASS single-login-click-starts-gemini-agent");

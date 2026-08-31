@@ -23,7 +23,7 @@ async function reportGeminiDocument(attempt = 0) {
   try {
     const response = await chrome.runtime.sendMessage({
       type: "GEMINI_DOCUMENT_SIGNAL",
-      version: 9,
+      version: 10,
       origin: location.origin,
       readyState: document.readyState,
       targetAccountObserved,

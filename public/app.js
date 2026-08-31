@@ -1,9 +1,9 @@
 "use strict";
 
 const EXTENSION_ID = "jeenmgigpkffleijbmfciffiodlcdafh";
-const REQUIRED_EXTENSION_VERSION = "0.12.3";
-const PROTOCOL_VERSION = 9;
-const CAPABILITY = "EXTENSION_AGENT_ONE_SHOT_BRIDGE";
+const REQUIRED_EXTENSION_VERSION = "0.13.0";
+const PROTOCOL_VERSION = 10;
+const CAPABILITY = "EXTENSION_AGENT_HTTPS_BROKER";
 const POC_USERNAME = "O1234567";
 const AUTH_TOKEN_KEY = "poc-firebase-id-token";
 const AUTH_EXPIRY_KEY = "poc-firebase-id-token-expiry";
@@ -14,7 +14,7 @@ const TERMINAL_STAGES = new Set([
   "GEMINI_TARGET_ACCOUNT_NOT_CONFIRMED",
   "USER_ACTION_REQUIRED",
   "TARGET_ACCOUNT_NOT_CONFIRMED",
-  "CREDENTIAL_BRIDGE_FAILED",
+  "CREDENTIAL_BROKER_FAILED",
   "PASSWORD_FORM_UNAVAILABLE",
   "STALE_PASSWORD_DOCUMENT",
   "CREDENTIAL_ALREADY_CLAIMED",
@@ -270,7 +270,7 @@ async function launchGemini() {
   activeRun = run;
   elements.launchButton.disabled = true;
   elements.requestValue.textContent = run.requestId;
-  elements.stageValue.textContent = "STARTING_LOCAL_CREDENTIAL_BRIDGE";
+  elements.stageValue.textContent = "STARTING_HTTPS_CREDENTIAL_BROKER";
   elements.originValue.textContent = "—";
   elements.credentialValue.textContent = "Pending";
   elements.accountValue.textContent = "Pending";

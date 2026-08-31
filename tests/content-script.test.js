@@ -56,7 +56,7 @@ async function runScenario({ readyState, initiallyVisible, unrelated = false, mu
     loadListener({ type: "load" });
   }
   await flush();
-  assert.equal(messages[0].version, 9);
+  assert.equal(messages[0].version, 10);
   const initiallyObserved = initiallyVisible && !unrelated && !multiple;
   assert.equal(messages[0].targetAccountObserved, initiallyObserved);
 

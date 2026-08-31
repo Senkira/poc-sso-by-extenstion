@@ -1,21 +1,21 @@
 "use strict";
 
-const PROTOCOL_VERSION = 9;
+const PROTOCOL_VERSION = 10;
 const ALLOWED_ORIGIN = "https://poc-after-sso-login-gemini.web.app";
 const TARGET_EMAIL = "codeassist.04@easybuy.co.th";
 const LOGIN_URL = "https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fgemini.google.com%2Fapp&followup=https%3A%2F%2Fgemini.google.com%2Fapp";
 const GEMINI_URL = "https://gemini.google.com/app";
-const NATIVE_HOST = "com.senkira.gemini_extension_agent";
+const CREDENTIAL_BROKER_URL = "https://us-central1-poc-after-sso-login-gemini.cloudfunctions.net/credentialBroker";
 const FIREBASE_API_KEY = "AIzaSyBAmRwEIELh_AA7E1omzf8TrVV3Cp4HPFc";
 const POC_AUTH_EMAIL = "o1234567@poc.invalid";
 const POC_USERNAME = "O1234567";
 const POC_FIREBASE_UID = "VHX1QkrsewSrrWB0g3BjyHepdWX2";
-const SESSION_STATE_KEY = "geminiExtensionAgentV9";
+const SESSION_STATE_KEY = "geminiExtensionAgentV10";
 const RUN_TTL_MS = 20 * 60 * 1000;
 const AUTOMATION_RETRY_LIMIT = 60;
 const AUTOMATION_RETRY_MS = 500;
 const AUTH_TIMEOUT_MINUTES = 15;
-const NATIVE_TIMEOUT_MS = 20000;
+const BROKER_TIMEOUT_MS = 20000;
 const SCRIPT_TIMEOUT_MS = 5000;
 const PROMPT_CONFIRM_TIMEOUT_MS = 15000;
 const runs = new Map();
@@ -85,6 +85,7 @@ function persistedRun(run) {
   return {
     ...publicRun(run),
     pocUid: typeof run.pocUid === "string" ? run.pocUid : null,
+    brokerIdToken: typeof run.brokerIdToken === "string" ? run.brokerIdToken : null,
     currentDocumentId: typeof run.currentDocumentId === "string" ? run.currentDocumentId : null,
     geminiDocumentId: typeof run.geminiDocumentId === "string" ? run.geminiDocumentId : null,
     confirmedDocumentId: typeof run.confirmedDocumentId === "string" ? run.confirmedDocumentId : null,
@@ -131,6 +132,7 @@ async function hydrateState() {
         ? saved.credentialState
         : saved.credentialDelivered === true ? "CONSUMED" : "NOT_REQUESTED",
       pocUid: saved.pocUid,
+      brokerIdToken: typeof saved.brokerIdToken === "string" ? saved.brokerIdToken : null,
       currentDocumentId: typeof saved.currentDocumentId === "string" ? saved.currentDocumentId : null,
       geminiDocumentId: typeof saved.geminiDocumentId === "string" ? saved.geminiDocumentId : null,
       confirmedDocumentId: typeof saved.confirmedDocumentId === "string" ? saved.confirmedDocumentId : null,
@@ -227,7 +229,7 @@ async function pingExtension() {
     ok: true,
     version: chrome.runtime.getManifest().version,
     protocolVersion: PROTOCOL_VERSION,
-    capability: "EXTENSION_AGENT_ONE_SHOT_BRIDGE",
+    capability: "EXTENSION_AGENT_HTTPS_BROKER",
     incognitoAccessAllowed
   };
 }
@@ -266,24 +268,25 @@ async function authenticatePoc(message) {
     return { ok: false, error: "INVALID_POC_CREDENTIAL" };
   }
 
-  let credential;
+  let authorization;
   try {
-    credential = await withTimeout(chrome.runtime.sendNativeMessage(NATIVE_HOST, {
+    authorization = await callCredentialBroker({
       action: "authenticatePoc",
       requestId: message.requestId,
+      username: POC_USERNAME,
       version: PROTOCOL_VERSION
-    }), NATIVE_TIMEOUT_MS, "POC_CREDENTIAL_BRIDGE_TIMEOUT");
-    if (credential?.ok !== true
-        || typeof credential.username !== "string"
-        || credential.username.toUpperCase() !== POC_USERNAME
-        || typeof credential.idToken !== "string") {
-      throw new Error("POC_CREDENTIAL_BRIDGE_FAILED");
+    });
+    if (authorization?.ok !== true
+        || typeof authorization.username !== "string"
+        || authorization.username.toUpperCase() !== POC_USERNAME
+        || typeof authorization.idToken !== "string") {
+      throw new Error("POC_BROKER_AUTH_FAILED");
     }
-    await verifyPocIdToken(credential.idToken);
-    const expiresIn = Number(credential.expiresIn);
-    const idToken = credential.idToken;
-    credential.idToken = "";
-    credential = null;
+    await verifyPocIdToken(authorization.idToken);
+    const expiresIn = Number(authorization.expiresIn);
+    const idToken = authorization.idToken;
+    authorization.idToken = "";
+    authorization = null;
     return {
       ok: true,
       idToken,
@@ -291,11 +294,11 @@ async function authenticatePoc(message) {
       username: POC_USERNAME
     };
   } catch (error) {
-    if (credential?.idToken) credential.idToken = "";
-    credential = null;
+    if (authorization?.idToken) authorization.idToken = "";
+    authorization = null;
     return {
       ok: false,
-      error: error instanceof Error ? error.message : "POC_CREDENTIAL_BRIDGE_FAILED"
+      error: error instanceof Error ? error.message : "POC_BROKER_AUTH_FAILED"
     };
   }
 }
@@ -350,6 +353,7 @@ async function startAgentUnlocked(message) {
     credentialDelivered: false,
     credentialState: "NOT_REQUESTED",
     pocUid,
+    brokerIdToken: message.pocIdToken,
     authTabId: null,
     geminiTabId: null,
     currentDocumentId: null,
@@ -529,18 +533,43 @@ function clearPasswordInput() {
   return true;
 }
 
+async function callCredentialBroker(body, idToken = null) {
+  const headers = { "Content-Type": "application/json" };
+  if (typeof idToken === "string" && idToken.length > 0) {
+    headers.Authorization = `Bearer ${idToken}`;
+  }
+  const response = await withTimeout(fetch(CREDENTIAL_BROKER_URL, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+    cache: "no-store",
+    credentials: "omit",
+    redirect: "error"
+  }), BROKER_TIMEOUT_MS, "CREDENTIAL_BROKER_TIMEOUT");
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload || typeof payload !== "object") {
+    throw new Error(payload?.error || "CREDENTIAL_BROKER_FAILED");
+  }
+  return payload;
+}
+
 async function fetchOneShotCredential(run) {
-  const payload = await withTimeout(chrome.runtime.sendNativeMessage(NATIVE_HOST, {
+  if (typeof run.brokerIdToken !== "string" || run.brokerIdToken.length < 100) {
+    throw new Error("POC_AUTH_REQUIRED");
+  }
+  const idToken = run.brokerIdToken;
+  const payload = await callCredentialBroker({
     action: "getGoogleCredential",
     requestId: run.requestId,
     version: PROTOCOL_VERSION
-  }), NATIVE_TIMEOUT_MS, "CREDENTIAL_BRIDGE_TIMEOUT");
+  }, idToken);
+  run.brokerIdToken = null;
   if (payload?.ok !== true
       || typeof payload.email !== "string"
       || payload.email.toLowerCase() !== TARGET_EMAIL
       || typeof payload.password !== "string"
       || payload.password.length === 0) {
-    throw new Error(payload?.error || "Credential bridge returned an invalid target credential.");
+    throw new Error(payload?.error || "Credential broker returned an invalid target credential.");
   }
   return payload;
 }
@@ -552,7 +581,7 @@ async function closeFailedWindow(run) {
 }
 
 async function failRun(run, stage, note) {
-  updateRun(run, { stage, note, identityCheckComplete: true, closed: true });
+  updateRun(run, { stage, note, identityCheckComplete: true, closed: true, brokerIdToken: null });
   await chrome.alarms.clear(authAlarmName(run.requestId)).catch(() => {});
   if (Number.isInteger(run.authTabId) && typeof run.currentDocumentId === "string") {
     await withTimeout(chrome.scripting.executeScript({
@@ -642,7 +671,7 @@ async function automateGoogle(run, tabId, documentId) {
       updateRun(run, {
         stage: "FETCHING_ONE_SHOT_CREDENTIAL",
         credentialState: "REQUESTING",
-        note: "Requesting the target credential from the local one-shot bridge."
+        note: "Requesting the target credential from the HTTPS one-shot broker."
       });
       await persistState();
       let credential;
@@ -693,8 +722,9 @@ async function automateGoogle(run, tabId, documentId) {
         if (credential) credential.password = "";
         credential = null;
         updateRun(run, { credentialState: "CONSUMED" });
-        await failRun(run, "CREDENTIAL_BRIDGE_FAILED",
-          error instanceof Error ? error.message : "The one-shot credential bridge failed.");
+        run.brokerIdToken = null;
+        await failRun(run, "CREDENTIAL_BROKER_FAILED",
+          error instanceof Error ? error.message : "The one-shot credential broker failed.");
         return;
       }
     }
