@@ -51,7 +51,7 @@ if ($firebase.hosting.site -ne 'poc-after-sso-login-gemini') { throw 'Wrong Fire
 if ($firebase.auth.providers.emailPassword -ne $true) { throw 'Firebase Email/Password authentication is not configured.' }
 if (($firebase.hosting.headers | ConvertTo-Json -Depth 20) -match 'identitytoolkit\.googleapis\.com') { throw 'Hosted page must not connect directly to Firebase password authentication.' }
 if ($firebase.hosting.PSObject.Properties.Name -contains 'functions') { throw 'Firebase Functions are outside this static POC.' }
-if ($html -notmatch '/app.js\?v=0\.10\.2' -or $html -notmatch '/styles.css\?v=0\.10\.2') { throw 'Hosted assets are not cache-busted.' }
+if ($html -notmatch '/app.js\?v=0\.10\.3' -or $html -notmatch '/styles.css\?v=0\.10\.3') { throw 'Hosted assets are not cache-busted.' }
 if ($worker -notmatch 'documentIds' -or $worker -notmatch 'webNavigation\.getFrame') { throw 'Exact-document reconciliation is missing.' }
 if ($worker -notmatch 'windows\.getAll' -or $worker -notmatch 'INCOGNITO_SESSION_NOT_FRESH') { throw 'Fresh InPrivate session gate is missing.' }
 if ($worker -notmatch 'credentialState' -or $worker -notmatch 'CREDENTIAL_ALREADY_CLAIMED') { throw 'Atomic one-shot credential state is missing.' }

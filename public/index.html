@@ -5,92 +5,80 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light dark">
     <title>Gemini Extension Agent POC</title>
-    <link rel="stylesheet" href="/styles.css?v=0.10.2">
-    <script src="/app.js?v=0.10.2" defer></script>
+    <link rel="stylesheet" href="/styles.css?v=0.10.3">
+    <script src="/app.js?v=0.10.3" defer></script>
   </head>
   <body>
     <main class="shell">
       <header>
-        <p class="eyebrow">ONLINE POC · EXTENSION AGENT · ISOLATED LOGIN</p>
-        <h1>ล็อกอิน POC แล้วเปิด Gemini โดยไม่แตะรหัสผ่าน</h1>
-        <p class="lead">
-          Agent เดิมถูกย้ายเข้า Chromium MV3 Extension ส่วน one-shot native bridge
-          อ่าน credential จาก Windows Credential Manager และหยุดทันทีหลังส่งให้ Extension ในหน่วยความจำ
-        </p>
+        <h1>Gemini Login POC</h1>
       </header>
 
       <section id="login-panel" class="card" aria-labelledby="login-title">
         <h2 id="login-title">POC login</h2>
         <form id="login-form">
-          <label for="username">Username</label>
+          <label for="username">Employee ID</label>
           <input id="username" name="username" value="O1234567" autocomplete="username" readonly required>
-          <p class="notice">กดครั้งเดียว: Extension ยืนยัน Firebase ผ่าน one-shot native bridge แล้วเริ่ม Gemini อัตโนมัติ</p>
           <div class="status-row">
             <div>
-              <p class="label">Extension preflight</p>
-              <p id="preflight-detail">กำลังตรวจสอบ Extension…</p>
+              <p class="label">Extension</p>
+              <p id="preflight-detail">Checking…</p>
             </div>
             <span id="preflight-badge" class="badge pending">Checking</span>
           </div>
-          <button id="preflight-button" class="secondary" type="button">ตรวจ Extension อีกครั้ง</button>
-          <button id="login-button" type="submit">Login และเปิด Gemini</button>
+          <button id="preflight-button" class="secondary" type="button">Check Extension</button>
+          <button id="login-button" type="submit">Login</button>
           <p id="login-error" class="notice" role="alert"></p>
         </form>
       </section>
 
       <section id="launcher-panel" hidden>
         <div class="session-row">
-          <span>POC account: <strong>O1234567</strong></span>
+          <strong>O1234567</strong>
           <button id="logout-button" class="secondary compact" type="button">Logout POC</button>
         </div>
         <section class="card" aria-labelledby="connection-title">
           <div class="status-row">
             <div>
-              <p class="label" id="connection-title">Extension connection</p>
-              <p id="connection-detail">กำลังตรวจสอบ Extension…</p>
+              <p class="label" id="connection-title">Extension</p>
+              <p id="connection-detail">Checking…</p>
             </div>
             <span id="connection-badge" class="badge pending">Checking</span>
           </div>
-          <button id="launch-button" type="button" disabled>เปิด Gemini isolated session</button>
-          <button id="retry-button" class="secondary" type="button">ตรวจ Extension อีกครั้ง</button>
+          <button id="launch-button" type="button" disabled>Open Gemini isolated session</button>
+          <button id="retry-button" class="secondary" type="button">Check Again</button>
         </section>
 
         <section class="card evidence" aria-labelledby="evidence-title">
-          <h2 id="evidence-title">หลักฐาน runtime</h2>
+          <h2 id="evidence-title">Runtime</h2>
           <dl>
             <div><dt>Request</dt><dd id="request-value">—</dd></div>
             <div><dt>Stage</dt><dd id="stage-value">ยังไม่ได้เริ่ม</dd></div>
-            <div><dt>Observed origin</dt><dd id="origin-value">—</dd></div>
-            <div><dt>Credential bridge</dt><dd id="credential-value">Pending</dd></div>
-            <div><dt>Target account</dt><dd id="account-value">Pending</dd></div>
+            <div><dt>Origin</dt><dd id="origin-value">—</dd></div>
+            <div><dt>Credential</dt><dd id="credential-value">Pending</dd></div>
+            <div><dt>Account</dt><dd id="account-value">Pending</dd></div>
             <div><dt>Note</dt><dd id="note-value">—</dd></div>
           </dl>
-          <p class="notice">
-            ระบบถือว่าสำเร็จเมื่อ Gemini ใน InPrivate แสดงบัญชีเป้าหมายจริงเท่านั้น หาก Google ขอ MFA,
-            CAPTCHA หรือ device approval ระบบปิดหน้าต่างและรายงาน failure โดยไม่ให้ผู้ใช้แตะ password
-          </p>
         </section>
 
         <details class="card">
-          <summary>ติดตั้งครั้งเดียว</summary>
+          <summary>Setup</summary>
           <ol>
-            <li><a href="/downloads/gemini-extension-agent-poc-v0.10.0.zip" download>ดาวน์โหลดชุดติดตั้ง v0.10.0</a> แล้วแตกไฟล์</li>
-            <li>ติดตั้ง unpacked Extension จากโฟลเดอร์ <code>extension</code> และเปิด Allow in InPrivate</li>
-            <li>รัน <code>bootstrap\Install.ps1</code> เพื่อติดตั้ง one-shot credential bridge</li>
-            <li>กลับมาหน้านี้แล้วกดตรวจ Extension</li>
+            <li><a href="/downloads/gemini-extension-agent-poc-v0.10.0.zip" download>Download v0.10.0</a></li>
+            <li>Load unpacked <code>extension</code> and enable Allow in InPrivate</li>
+            <li>Run <code>bootstrap\Install.ps1</code></li>
           </ol>
           <p>Extension ID: <code id="extension-id"></code></p>
         </details>
       </section>
 
       <section class="card" aria-labelledby="prompt-title">
-        <h2 id="prompt-title">ส่งข้อความไป Gemini</h2>
+        <h2 id="prompt-title">Gemini Prompt</h2>
         <label for="prompt">Prompt</label>
         <textarea id="prompt" rows="4" maxlength="4000" disabled></textarea>
-        <button id="prompt-button" type="button" disabled>Post to Gemini</button>
-        <p class="notice">เปิดใช้งานเมื่อ Extension ยืนยันว่าหน้า Gemini เป็นบัญชีเป้าหมายที่ถูกต้องแล้วเท่านั้น</p>
+        <button id="prompt-button" type="button" disabled>Post</button>
       </section>
     </main>
-    <footer>Firebase Hosting · Chromium MV3 · Static hosting only · No idle compute</footer>
+    <footer>Firebase Hosting · MV3 Extension</footer>
   </body>
 </html>

@@ -124,7 +124,7 @@ async function handleLogin(event) {
   elements.loginError.textContent = "";
   const username = elements.username.value.trim();
   if (username.toUpperCase() !== POC_USERNAME) {
-    elements.loginError.textContent = "ชื่อผู้ใช้ POC ไม่ถูกต้อง";
+    elements.loginError.textContent = "Invalid employee ID";
     return;
   }
   elements.loginButton.disabled = true;
@@ -150,7 +150,7 @@ async function handleLogin(event) {
     }
   } catch {
     clearPocSession();
-    elements.loginError.textContent = "ยืนยัน POC ผ่าน Extension ไม่สำเร็จ";
+    elements.loginError.textContent = "POC authentication failed";
   } finally {
     elements.loginButton.disabled = false;
   }
@@ -215,17 +215,17 @@ async function checkExtension() {
         || response.protocolVersion !== PROTOCOL_VERSION
         || response.version !== REQUIRED_EXTENSION_VERSION
         || response.capability !== CAPABILITY) {
-      setConnection(false, `ต้อง Reload Gemini Extension Agent v${REQUIRED_EXTENSION_VERSION}`);
+      setConnection(false, `Reload Extension v${REQUIRED_EXTENSION_VERSION}`);
       return false;
     }
     if (response.incognitoAccessAllowed !== true) {
-      setConnection(false, "พบ Extension แล้ว แต่ต้องเปิด Allow in InPrivate/Incognito ก่อนใช้งาน");
+      setConnection(false, "Enable Allow in InPrivate");
       return false;
     }
-    setConnection(true, `เชื่อมต่อ Gemini Extension Agent v${response.version} แล้ว`);
+    setConnection(true, `Extension v${response.version} ready`);
     return true;
   } catch {
-    setConnection(false, "ไม่พบ extension ที่ติดตั้งและอนุญาตสำหรับเว็บนี้");
+    setConnection(false, "Extension not found");
     return false;
   }
 }
@@ -284,7 +284,7 @@ async function launchGemini() {
   elements.originValue.textContent = "—";
   elements.credentialValue.textContent = "Pending";
   elements.accountValue.textContent = "Pending";
-  elements.noteValue.textContent = "Extension จะเรียก one-shot native credential bridge เมื่อ Google แสดง password step";
+  elements.noteValue.textContent = "Waiting for Google password step";
   try {
     const response = await sendToExtension({
       type: "START_AGENT",
