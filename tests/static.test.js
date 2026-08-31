@@ -10,10 +10,11 @@ const worker = fs.readFileSync("extension/service-worker.js", "utf8");
 const host = fs.readFileSync("bootstrap/NativeHost.cs", "utf8");
 const firebase = JSON.parse(fs.readFileSync("firebase.json", "utf8"));
 
-assert.equal(manifest.version, "0.12.2");
+assert.equal(manifest.version, "0.12.3");
 assert.match(worker, /AUTH_TIMEOUT_MINUTES = 15/);
 assert.match(worker, /RUN_TTL_MS = 20 \* 60 \* 1000/);
 assert.match(app, /POLL_TIMEOUT_MS = 20 \* 60 \* 1000/);
+assert.match(fs.readFileSync("extension/content-script.js", "utf8"), /MAX_IDENTITY_ATTEMPTS = 900/);
 assert.equal(manifest.incognito, "spanning");
 assert.equal(manifest.permissions.includes("nativeMessaging"), true);
 assert.equal(manifest.permissions.includes("alarms"), true);

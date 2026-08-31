@@ -1125,15 +1125,15 @@ async function handleInternalMessage(message, sender) {
     await persistState();
     chrome.windows.update(run.windowId, { state: "normal", focused: true }).catch(() => {});
   } else if (message.identityCheckComplete && !run.targetAccountConfirmed) {
-    if (!run.googleSessionEstablished || !run.geminiReadyForIdentityFailure) {
-      updateRun(run, {
-        stage: "GEMINI_WAITING_FOR_GOOGLE_SESSION",
-        note: "Gemini is waiting for the background Google session to finish."
-      });
-      await persistState();
-      return { ok: true, confirmed: false, complete: false, waiting: true };
-    }
-    await failRun(run, "GEMINI_TARGET_ACCOUNT_NOT_CONFIRMED", "Gemini loaded after authentication with an unconfirmed account.");
+    updateRun(run, {
+      stage: "GEMINI_WAITING_FOR_GOOGLE_SESSION",
+      identityCheckComplete: false,
+      note: run.googleSessionEstablished && run.geminiReadyForIdentityFailure
+        ? "Gemini is still loading the target account; waiting until the authentication deadline."
+        : "Gemini is waiting for the background Google session to finish."
+    });
+    await persistState();
+    return { ok: true, confirmed: false, complete: false, waiting: true };
   }
   return { ok: true, confirmed: run.targetAccountConfirmed, complete: run.identityCheckComplete };
 }

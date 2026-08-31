@@ -19,13 +19,13 @@ Production URL: <https://poc-after-sso-login-gemini.web.app/>
 
 ถ้า Google ขอ MFA, CAPTCHA, passkey, device approval หรือหน้า password ไม่ผูกกับ target account ระบบปิด InPrivate window และรายงาน failure ไม่พยายาม bypass challenge
 
-หลังส่ง password ระบบตั้ง MV3 alarm สิบห้านาที หาก Google ไม่ไปถึง Gemini และยืนยันบัญชีเป้าหมายภายในเวลา ระบบปิด hidden window ด้วย `AUTH_TIMEOUT` แทนการค้างเงียบ หน้า POC จะติดตามสถานะต่อได้ยี่สิบนาที
+หลังส่ง password ระบบตั้ง MV3 alarm สิบห้านาที หาก Gemini ยังไม่เห็น account control ระบบจะรอและ retry ต่อ ไม่ปิด isolated window ก่อนเวลา หน้า POC จะติดตามสถานะต่อได้ยี่สิบนาที เมื่อครบเวลาโดยยังยืนยันบัญชีไม่ได้จึงปิดด้วย `AUTH_TIMEOUT`
 
 ## Install once
 
 Runtime บนเครื่องปลายทางใช้ Edge/Chrome, Extension, PowerShell/.NET ที่มากับ Windows และ Windows Credential Manager ไม่ต้องติดตั้ง Node.js
 
-1. ดาวน์โหลด `gemini-extension-agent-poc-v0.12.2.zip` จากหน้า Production แล้วแตกไฟล์
+1. ดาวน์โหลด `gemini-extension-agent-poc-v0.12.3.zip` จากหน้า Production แล้วแตกไฟล์
 2. เปิด `edge://extensions` หรือ `chrome://extensions`
 3. เปิด Developer mode แล้ว Load unpacked จากโฟลเดอร์ `extension`
 4. เปิด Details ของ Extension และเปิด Allow in InPrivate/Incognito หนึ่งครั้ง

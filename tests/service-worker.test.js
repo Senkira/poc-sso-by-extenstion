@@ -35,7 +35,7 @@ const chrome = {
     isAllowedIncognitoAccess(callback) { callback(true); }
   },
   runtime: {
-    getManifest() { return { version: "0.12.2" }; },
+    getManifest() { return { version: "0.12.3" }; },
     async sendNativeMessage(host, message) {
       nativeMessages.push({ host, message });
       assert.equal(message.version, 9);
@@ -161,7 +161,7 @@ async function flush(rounds = 8) {
 
 async function main() {
   const ping = await external({ type: "PING", version: 9 });
-  assert.equal(ping.version, "0.12.2");
+  assert.equal(ping.version, "0.12.3");
   assert.equal(ping.protocolVersion, 9);
   assert.equal(ping.capability, "EXTENSION_AGENT_ONE_SHOT_BRIDGE");
   assert.equal(ping.incognitoAccessAllowed, true);
@@ -251,6 +251,23 @@ async function main() {
   currentFrame = { documentId: "auth-finished-doc", url: "https://gemini.google.com/app" };
   listeners.completed({ frameId: 0, tabId: 81, documentId: currentFrame.documentId, url: currentFrame.url });
   await flush();
+
+  const postAuthGeminiFrame = { documentId: "gemini-post-auth-miss-doc", url: "https://gemini.google.com/app" };
+  tabFrames.set(82, postAuthGeminiFrame);
+  listeners.committed({ frameId: 0, tabId: 82, ...postAuthGeminiFrame });
+  await flush();
+  const postAuthWaitingSignal = await internal(
+    { type: "GEMINI_DOCUMENT_SIGNAL", version: 9, targetAccountObserved: false, identityCheckComplete: true },
+    {
+      frameId: 0,
+      documentId: postAuthGeminiFrame.documentId,
+      url: postAuthGeminiFrame.url,
+      tab: { id: 82, incognito: true }
+    }
+  );
+  assert.equal(postAuthWaitingSignal.waiting, true);
+  status = await external({ type: "GET_STATUS", version: 9, requestId });
+  assert.equal(status.run.closed, false);
 
   currentFrame = { documentId: "gemini-doc-before-reload", url: "https://gemini.google.com/app" };
   tabFrames.set(82, currentFrame);
@@ -433,6 +450,7 @@ async function main() {
   console.log("PASS prompt-success-requires-rendered-user-turn-postcondition");
   console.log("PASS isolated-new-gemini-tab-reload-and-single-tab-handoff");
   console.log("PASS pre-auth-gemini-miss-waits-instead-of-closing-isolate");
+  console.log("PASS post-auth-gemini-miss-waits-until-deadline");
   console.log("PASS terminal-failure-stage-survives-tab-close");
 }
 

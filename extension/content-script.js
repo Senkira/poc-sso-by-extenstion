@@ -1,7 +1,7 @@
 "use strict";
 
 const TARGET_EMAIL = "codeassist.04@easybuy.co.th";
-const MAX_IDENTITY_ATTEMPTS = 40;
+const MAX_IDENTITY_ATTEMPTS = 900;
 
 function targetAccountIsVisible() {
   const normalized = TARGET_EMAIL.toLowerCase();
