@@ -16,11 +16,13 @@ const AUTOMATION_RETRY_MS = 500;
 const AUTH_TIMEOUT_MINUTES = 1;
 const NATIVE_TIMEOUT_MS = 20000;
 const SCRIPT_TIMEOUT_MS = 5000;
+const PROMPT_CONFIRM_TIMEOUT_MS = 15000;
 const runs = new Map();
 const tabToRequest = new Map();
 const automationLocks = new Map();
 let stateReady = null;
 let persistTail = Promise.resolve();
+let startAgentTail = Promise.resolve();
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -272,7 +274,7 @@ async function authenticatePoc(message) {
   }
 }
 
-async function startAgent(message) {
+async function startAgentUnlocked(message) {
   try {
     await ensureStateReady();
   } catch {
@@ -376,6 +378,14 @@ async function startAgent(message) {
     await persistState().catch(() => {});
     return { ok: false, error: "OPEN_FAILED", run: publicRun(run) };
   }
+}
+
+function startAgent(message) {
+  const operation = startAgentTail
+    .catch(() => {})
+    .then(() => startAgentUnlocked(message));
+  startAgentTail = operation.then(() => undefined, () => undefined);
+  return operation;
 }
 
 function inspectGooglePage(targetEmail) {
@@ -690,6 +700,30 @@ function inspectGeminiActiveAccount(targetEmail) {
 }
 
 function injectPrompt(targetEmail, prompt) {
+  function normalizeText(value) {
+    return String(value || "").replace(/\s+/g, " ").trim();
+  }
+  function composerValue(element) {
+    if (!element) return "";
+    if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
+      return normalizeText(element.value);
+    }
+    return normalizeText(element.textContent);
+  }
+  function exactVisiblePromptCount(root, excludedComposer, normalizedPrompt) {
+    return Array.from(root.querySelectorAll("*")).filter((element) => {
+      if (element === excludedComposer
+          || element.contains(excludedComposer)
+          || excludedComposer?.contains(element)
+          || element.getClientRects().length === 0
+          || normalizeText(element.innerText) !== normalizedPrompt) {
+        return false;
+      }
+      return !Array.from(element.children).some(
+        (child) => normalizeText(child.innerText) === normalizedPrompt
+      );
+    }).length;
+  }
   const controls = Array.from(document.querySelectorAll([
     "a[href*='accounts.google.com/SignOutOptions'][aria-label]",
     "button[data-ogsr-up][aria-label]",
@@ -704,6 +738,9 @@ function injectPrompt(targetEmail, prompt) {
   }
   const candidate = document.querySelector("div[contenteditable='true'][role='textbox'], textarea[aria-label], textarea");
   if (!candidate) return { ok: false, error: "PROMPT_BOX_NOT_FOUND" };
+  const normalizedPrompt = normalizeText(prompt);
+  const messageRoot = document.querySelector("main, [role='main']") || document.body;
+  const beforeCount = exactVisiblePromptCount(messageRoot, candidate, normalizedPrompt);
   candidate.focus();
   if (candidate instanceof HTMLTextAreaElement || candidate instanceof HTMLInputElement) {
     const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(candidate), "value")?.set;
@@ -716,7 +753,27 @@ function injectPrompt(targetEmail, prompt) {
   const send = document.querySelector("button[aria-label*='Send' i], button[aria-label*='ส่ง' i], button[data-test-id*='send' i]");
   if (!send || send.disabled) return { ok: false, error: "SEND_BUTTON_NOT_READY" };
   send.click();
-  return { ok: true };
+  return new Promise((resolve) => {
+    let attempts = 0;
+    const verify = () => {
+      const currentComposer = document.querySelector(
+        "div[contenteditable='true'][role='textbox'], textarea[aria-label], textarea"
+      );
+      const composerCleared = !currentComposer || composerValue(currentComposer) !== normalizedPrompt;
+      const afterCount = exactVisiblePromptCount(messageRoot, currentComposer, normalizedPrompt);
+      if (composerCleared && afterCount > beforeCount) {
+        resolve({ ok: true, postcondition: "EXACT_USER_TURN_OBSERVED" });
+        return;
+      }
+      attempts += 1;
+      if (attempts >= 40) {
+        resolve({ ok: false, error: "PROMPT_POSTCONDITION_NOT_OBSERVED" });
+        return;
+      }
+      setTimeout(verify, 250);
+    };
+    setTimeout(verify, 250);
+  });
 }
 
 async function postPrompt(message) {
@@ -757,14 +814,17 @@ async function postPrompt(message) {
     target: { tabId: run.tabId, documentIds: [run.confirmedDocumentId] },
     func: injectPrompt,
     args: [TARGET_EMAIL, message.prompt]
-  }), SCRIPT_TIMEOUT_MS, "PROMPT_SUBMIT_TIMEOUT");
+  }), PROMPT_CONFIRM_TIMEOUT_MS, "PROMPT_SUBMIT_TIMEOUT");
   if (results?.[0]?.documentId !== run.confirmedDocumentId) {
     await failRun(run, "GEMINI_CONTEXT_CHANGED", "Prompt targeting did not match the confirmed document.");
     return { ok: false, error: "GEMINI_CONTEXT_CHANGED", run: publicRun(run) };
   }
   const result = results?.[0]?.result || { ok: false, error: "PROMPT_SUBMIT_FAILED" };
   if (result.ok) {
-    updateRun(run, { stage: "PROMPT_SUBMITTED", note: "The prompt was posted to the confirmed Gemini session." });
+    updateRun(run, {
+      stage: "PROMPT_SUBMITTED_CONFIRMED",
+      note: "Gemini rendered a new exact user turn after the composer cleared."
+    });
     await persistState();
   }
   return { ...result, run: publicRun(run) };

@@ -14,7 +14,7 @@ $archiveName = "gemini-extension-agent-poc-v$($manifest.version).zip"
 $archivePath = Join-Path $projectRoot "public\downloads\$archiveName"
 
 if ($manifest.manifest_version -ne 3) { throw 'Manifest V3 is required.' }
-if ($manifest.version -ne '0.9.2') { throw 'Unexpected extension version.' }
+if ($manifest.version -ne '0.10.0') { throw 'Unexpected extension version.' }
 if ($manifest.incognito -ne 'spanning') { throw 'Spanning InPrivate execution is required.' }
 if ($manifest.permissions -notcontains 'nativeMessaging') { throw 'Native Messaging is required for the one-shot credential bridge.' }
 if ($manifest.permissions -notcontains 'storage') { throw 'Session-only state persistence is required for MV3 worker restarts.' }
@@ -51,10 +51,12 @@ if ($firebase.hosting.site -ne 'poc-after-sso-login-gemini') { throw 'Wrong Fire
 if ($firebase.auth.providers.emailPassword -ne $true) { throw 'Firebase Email/Password authentication is not configured.' }
 if (($firebase.hosting.headers | ConvertTo-Json -Depth 20) -match 'identitytoolkit\.googleapis\.com') { throw 'Hosted page must not connect directly to Firebase password authentication.' }
 if ($firebase.hosting.PSObject.Properties.Name -contains 'functions') { throw 'Firebase Functions are outside this static POC.' }
-if ($html -notmatch '/app.js\?v=0\.9\.2' -or $html -notmatch '/styles.css\?v=0\.9\.2') { throw 'Hosted assets are not cache-busted.' }
+if ($html -notmatch '/app.js\?v=0\.10\.0' -or $html -notmatch '/styles.css\?v=0\.10\.0') { throw 'Hosted assets are not cache-busted.' }
 if ($worker -notmatch 'documentIds' -or $worker -notmatch 'webNavigation\.getFrame') { throw 'Exact-document reconciliation is missing.' }
 if ($worker -notmatch 'windows\.getAll' -or $worker -notmatch 'INCOGNITO_SESSION_NOT_FRESH') { throw 'Fresh InPrivate session gate is missing.' }
 if ($worker -notmatch 'credentialState' -or $worker -notmatch 'CREDENTIAL_ALREADY_CLAIMED') { throw 'Atomic one-shot credential state is missing.' }
+if ($worker -notmatch 'startAgentTail' -or $worker -notmatch 'startAgentUnlocked') { throw 'Concurrent agent starts are not serialized.' }
+if ($worker -notmatch 'PROMPT_POSTCONDITION_NOT_OBSERVED' -or $worker -notmatch 'EXACT_USER_TURN_OBSERVED') { throw 'Gemini prompt postcondition is missing.' }
 if (-not (Test-Path -LiteralPath (Join-Path $projectRoot 'reference-agent\BrowserWorkerPool.cs'))) { throw 'Copied Agent reference is missing.' }
 if (Test-Path -LiteralPath (Join-Path $projectRoot 'package.json')) { throw 'Node runtime dependency is forbidden.' }
 if (-not (Test-Path -LiteralPath $archivePath)) { throw 'Packaged extension archive is missing.' }
@@ -112,6 +114,7 @@ Write-Output 'PASS single-click-poc-to-gemini-flow'
 Write-Output 'PASS native-host-firebase-uid-and-caller-gate'
 Write-Output 'PASS exact-document-reconciliation'
 Write-Output 'PASS atomic-credential-and-fresh-incognito-gates'
+Write-Output 'PASS serialized-agent-start-and-prompt-postcondition'
 Write-Output 'PASS inprivate-access-gate'
 Write-Output 'PASS mv3-session-state-recovery'
 Write-Output 'PASS stalled-authentication-timeout'

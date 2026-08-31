@@ -31,7 +31,7 @@ const chrome = {
     isAllowedIncognitoAccess(callback) { callback(true); }
   },
   runtime: {
-    getManifest() { return { version: "0.9.2" }; },
+    getManifest() { return { version: "0.10.0" }; },
     async sendNativeMessage(host, message) {
       nativeMessages.push({ host, message });
       assert.equal(message.version, 9);
@@ -141,7 +141,7 @@ async function flush(rounds = 8) {
 
 async function main() {
   const ping = await external({ type: "PING", version: 9 });
-  assert.equal(ping.version, "0.9.2");
+  assert.equal(ping.version, "0.10.0");
   assert.equal(ping.protocolVersion, 9);
   assert.equal(ping.capability, "EXTENSION_AGENT_ONE_SHOT_BRIDGE");
   assert.equal(ping.incognitoAccessAllowed, true);
@@ -223,13 +223,29 @@ async function main() {
     type: "POST_PROMPT", version: 9, requestId, pocIdToken, prompt: "POC test"
   });
   assert.equal(posted.ok, true);
-  assert.equal(posted.run.stage, "PROMPT_SUBMITTED");
+  assert.equal(posted.run.stage, "PROMPT_SUBMITTED_CONFIRMED");
 
   const cancelled = await external({
     type: "CANCEL_RUN", version: 9, requestId, pocIdToken
   });
   assert.equal(cancelled.ok, true);
   assert.equal(cancelled.run.stage, "CANCELLED");
+
+  const raceWindowCount = createdWindows.length;
+  const raceRequests = [
+    "123e4567-e89b-42d3-a456-426614174007",
+    "123e4567-e89b-42d3-a456-426614174008"
+  ];
+  const raceResults = await Promise.all(raceRequests.map((raceRequestId) => external({
+    type: "START_AGENT", version: 9, requestId: raceRequestId, pocIdToken
+  })));
+  assert.equal(raceResults.filter((result) => result.ok === true).length, 1);
+  assert.equal(raceResults.filter((result) => result.error === "RUN_ALREADY_ACTIVE").length, 1);
+  assert.equal(createdWindows.length, raceWindowCount + 1);
+  const raceWinner = raceResults.find((result) => result.ok === true);
+  await external({
+    type: "CANCEL_RUN", version: 9, requestId: raceWinner.run.requestId, pocIdToken
+  });
 
   failNextTabUpdate = true;
   const openFailureId = "123e4567-e89b-42d3-a456-426614174006";
@@ -326,6 +342,8 @@ async function main() {
   console.log("PASS missed-navigation-reconciles-from-current-frame");
   console.log("PASS worker-restart-never-reclaims-credential");
   console.log("PASS partial-window-open-failure-cleans-up-and-releases-run");
+  console.log("PASS concurrent-start-agent-is-serialized");
+  console.log("PASS prompt-success-requires-rendered-user-turn-postcondition");
 }
 
 main().catch((error) => {

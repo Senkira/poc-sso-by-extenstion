@@ -44,7 +44,7 @@ const chrome = {
       if (message.type === "PING") {
         callback({
           ok: true,
-          version: "0.9.2",
+          version: "0.10.0",
           protocolVersion: 9,
           capability: "EXTENSION_AGENT_ONE_SHOT_BRIDGE",
           incognitoAccessAllowed: true
@@ -77,7 +77,7 @@ const chrome = {
           ok: true,
           run: {
             requestId: message.requestId,
-            stage: "PROMPT_SUBMITTED",
+            stage: "PROMPT_SUBMITTED_CONFIRMED",
             observedOrigin: "https://gemini.google.com",
             credentialDelivered: true,
             targetAccountConfirmed: true,

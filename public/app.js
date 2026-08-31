@@ -1,7 +1,7 @@
 "use strict";
 
 const EXTENSION_ID = "jeenmgigpkffleijbmfciffiodlcdafh";
-const REQUIRED_EXTENSION_VERSION = "0.9.2";
+const REQUIRED_EXTENSION_VERSION = "0.10.0";
 const PROTOCOL_VERSION = 9;
 const CAPABILITY = "EXTENSION_AGENT_ONE_SHOT_BRIDGE";
 const POC_USERNAME = "O1234567";
