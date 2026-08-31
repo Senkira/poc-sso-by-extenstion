@@ -56,7 +56,7 @@ async function runScenario({ readyState, initiallyVisible, unrelated = false }) 
     loadListener({ type: "load" });
   }
   await flush();
-  assert.equal(messages[0].version, 4);
+  assert.equal(messages[0].version, 7);
   const initiallyObserved = initiallyVisible && !unrelated;
   assert.equal(messages[0].targetAccountObserved, initiallyObserved);
 

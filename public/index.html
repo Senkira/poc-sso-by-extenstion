@@ -4,66 +4,85 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light dark">
-    <title>Gemini Secretless Launcher POC</title>
-    <link rel="stylesheet" href="/styles.css?v=0.5.0">
-    <script src="/app.js?v=0.5.0" defer></script>
+    <title>Gemini Extension Agent POC</title>
+    <link rel="stylesheet" href="/styles.css?v=0.7.0">
+    <script src="/app.js?v=0.7.0" defer></script>
   </head>
   <body>
     <main class="shell">
       <header>
-        <p class="eyebrow">ONLINE · EXTENSION ONLY · NEGATIVE POC</p>
-        <h1>ทดสอบขอบเขต zero-touch Gemini login</h1>
+        <p class="eyebrow">ONLINE POC · EXTENSION AGENT · ISOLATED LOGIN</p>
+        <h1>ล็อกอิน POC แล้วเปิด Gemini โดยไม่แตะ Google password</h1>
         <p class="lead">
-          หน้า Firebase Hosting นี้ติดต่อ extension โดยตรง Extension เปิด Edge/Chrome InPrivate,
-          เลือกบัญชีเป้าหมาย และติดตาม flow โดยไม่อ่าน รับ เก็บ หรือ inject รหัสผ่าน
-          ผล production ล่าสุดหยุดที่ Google password challenge จึงยังไม่ใช่ successful zero-touch login
+          Agent เดิมถูกย้ายเข้า Chromium MV3 Extension ส่วน one-shot native bridge
+          อ่าน credential จาก Windows Credential Manager และหยุดทันทีหลังส่งให้ Extension ในหน่วยความจำ
         </p>
       </header>
 
-      <section class="card" aria-labelledby="connection-title">
-        <div class="status-row">
-          <div>
-            <p class="label" id="connection-title">Extension connection</p>
-            <p id="connection-detail">กำลังตรวจสอบ extension…</p>
-          </div>
-          <span id="connection-badge" class="badge pending">Checking</span>
+      <section id="login-panel" class="card" aria-labelledby="login-title">
+        <h2 id="login-title">POC login</h2>
+        <form id="login-form">
+          <label for="username">Username</label>
+          <input id="username" name="username" autocomplete="username" required>
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required>
+          <button id="login-button" type="submit">Login</button>
+          <p id="login-error" class="notice" role="alert"></p>
+        </form>
+      </section>
+
+      <section id="launcher-panel" hidden>
+        <div class="session-row">
+          <span>POC account: <strong>O1234567</strong></span>
+          <button id="logout-button" class="secondary compact" type="button">Logout POC</button>
         </div>
+        <section class="card" aria-labelledby="connection-title">
+          <div class="status-row">
+            <div>
+              <p class="label" id="connection-title">Extension connection</p>
+              <p id="connection-detail">กำลังตรวจสอบ Extension…</p>
+            </div>
+            <span id="connection-badge" class="badge pending">Checking</span>
+          </div>
+          <button id="launch-button" type="button" disabled>เปิด Gemini isolated session</button>
+          <button id="retry-button" class="secondary" type="button">ตรวจ Extension อีกครั้ง</button>
+        </section>
 
-        <button id="launch-button" type="button" disabled>เปิด Gemini ใน InPrivate ผ่าน extension</button>
-        <button id="retry-button" class="secondary" type="button">ตรวจ extension อีกครั้ง</button>
+        <section class="card evidence" aria-labelledby="evidence-title">
+          <h2 id="evidence-title">หลักฐาน runtime</h2>
+          <dl>
+            <div><dt>Request</dt><dd id="request-value">—</dd></div>
+            <div><dt>Stage</dt><dd id="stage-value">ยังไม่ได้เริ่ม</dd></div>
+            <div><dt>Observed origin</dt><dd id="origin-value">—</dd></div>
+            <div><dt>Credential bridge</dt><dd id="credential-value">Pending</dd></div>
+            <div><dt>Target account</dt><dd id="account-value">Pending</dd></div>
+            <div><dt>Note</dt><dd id="note-value">—</dd></div>
+          </dl>
+          <p class="notice">
+            ระบบถือว่าสำเร็จเมื่อ Gemini ใน InPrivate แสดงบัญชีเป้าหมายจริงเท่านั้น หาก Google ขอ MFA,
+            CAPTCHA หรือ device approval ระบบปิดหน้าต่างและรายงาน failure โดยไม่ให้ผู้ใช้แตะ password
+          </p>
+        </section>
+
+        <section class="card" aria-labelledby="prompt-title">
+          <h2 id="prompt-title">ส่งข้อความไป Gemini</h2>
+          <label for="prompt">Prompt</label>
+          <textarea id="prompt" rows="4" maxlength="4000" disabled></textarea>
+          <button id="prompt-button" type="button" disabled>Post to Gemini</button>
+        </section>
+
+        <details class="card">
+          <summary>ติดตั้งครั้งเดียว</summary>
+          <ol>
+            <li><a href="/downloads/gemini-extension-agent-poc-v0.7.0.zip" download>ดาวน์โหลดชุดติดตั้ง v0.7.0</a> แล้วแตกไฟล์</li>
+            <li>ติดตั้ง unpacked Extension จากโฟลเดอร์ <code>extension</code> และเปิด Allow in InPrivate</li>
+            <li>รัน <code>bootstrap\Install.ps1</code> เพื่อติดตั้ง one-shot credential bridge</li>
+            <li>กลับมาหน้านี้แล้วกดตรวจ Extension</li>
+          </ol>
+          <p>Extension ID: <code id="extension-id"></code></p>
+        </details>
       </section>
-
-      <section class="card evidence" aria-labelledby="evidence-title">
-        <h2 id="evidence-title">หลักฐาน runtime ที่ extension รายงาน</h2>
-        <dl>
-          <div><dt>Request</dt><dd id="request-value">—</dd></div>
-          <div><dt>Stage</dt><dd id="stage-value">ยังไม่ได้เริ่ม</dd></div>
-          <div><dt>Observed origin</dt><dd id="origin-value">—</dd></div>
-          <div><dt>Gemini document</dt><dd id="document-value">—</dd></div>
-          <div><dt>Target account</dt><dd id="account-value">Pending</dd></div>
-          <div><dt>Note</dt><dd id="note-value">—</dd></div>
-        </dl>
-        <p class="notice">
-          Acceptance จริงคือ กดจาก POC แล้วเข้า Gemini ของบัญชีเป้าหมายได้โดยผู้ใช้ไม่เห็น/ไม่กรอก Google password
-          แต่ static Hosting + extension ที่ไม่มี secret authority ไม่สามารถสร้าง Google authentication proof เองได้
-          หาก Google ขอ password, MFA หรือ device confirmation ระบบต้องจบ <code>USER_ACTION_REQUIRED</code>
-          ผลสำเร็จจะนับเมื่อ Gemini แสดงบัญชีเป้าหมายใน account controls เท่านั้น
-        </p>
-      </section>
-
-      <details class="card">
-        <summary>ติดตั้ง extension ครั้งแรกใน Chrome หรือ Edge</summary>
-        <ol>
-          <li><a href="/downloads/gemini-sso-launcher-extension-v0.5.0.zip" download>ดาวน์โหลด extension v0.5.0</a> และแตกไฟล์</li>
-          <li>Chrome เปิด <code>chrome://extensions</code> หรือ Edge เปิด <code>edge://extensions</code></li>
-          <li>เปิด Developer mode</li>
-          <li>เลือก Load unpacked แล้วเลือกโฟลเดอร์ที่แตกไฟล์ไว้</li>
-          <li>เปิด Details ของ extension แล้วเปิด Allow in InPrivate หนึ่งครั้ง</li>
-          <li>กลับมาหน้านี้และกด “ตรวจ extension อีกครั้ง”</li>
-        </ol>
-        <p>Extension ID ที่กำหนดตายตัว: <code id="extension-id"></code></p>
-      </details>
     </main>
-    <footer>Firebase Hosting · Chromium MV3 · Static only · No idle compute</footer>
+    <footer>Firebase Hosting · Chromium MV3 · Static hosting only · No idle compute</footer>
   </body>
 </html>

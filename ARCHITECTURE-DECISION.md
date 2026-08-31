@@ -1,75 +1,72 @@
-# Architecture decision: zero-touch Google login
+# ADR: one-shot local credential bridge for isolated Gemini login
 
-วันที่ตัดสินใจ: 2026-08-31
-
-## Requirement ที่ใช้ตัดสิน
-
-1. ผู้ใช้เข้า production Firebase POC และกด Login
-2. ใช้ extension ที่ติดตั้งครั้งเดียวเปิด isolated Edge/Chrome context
-3. ระบบ login `codeassist.04@easybuy.co.th` โดยผู้ใช้ไม่เห็นหรือกรอก Google password
-4. ผู้ใช้ส่ง prompt และใช้ Gemini ของบัญชีเป้าหมายได้
-5. ไม่ใช้ SSO, backend, Native Messaging, PowerShell หรือ Node.js บนเครื่องปลายทาง
-6. Google password ต้องไม่อยู่ใน static Hosting, extension package, extension storage, message, status หรือ log
-7. ห้ามอาศัย prior login, prior Google session, one-time first login หรือ one-time provisioning ทุกชนิด
-
-## Current verdict
-
-**Static Firebase Hosting + extension-only ไม่สามารถทำข้อ 3 ได้ภายใต้ requirement ทั้งหมดพร้อมกัน เมื่อห้ามทั้ง prior authentication และแหล่ง reusable authentication proof ทุกชนิด**
-
-Extension สามารถควบคุมหน้าเว็บและกรอก DOM ชั่วคราวได้ในเชิงกลไก แต่ก่อนทำเช่นนั้นต้องได้รับ Google password หรือ authentication proof จากที่ใดที่หนึ่ง ขอบเขตปัจจุบันตัดแหล่งที่มาที่เชื่อถือได้ออกทั้งหมด:
-
-| แหล่ง credential | ผล |
-| --- | --- |
-| ผู้ใช้กรอกตอน runtime | ผิด requirement ข้อ 3 |
-| ฝัง password/ciphertext ใน Firebase static asset | ผู้โจมตีดาวน์โหลดไป brute-force/offline analysis ได้ |
-| ฝัง password/key ใน extension | ผู้ใช้หรือผู้โจมตี inspect package ได้ และผิดข้อ 6 |
-| Edge/Chrome password manager | live E2E ใน InPrivate ยังขอ password; ไม่ deterministic และอาจขอ device verification |
-| reuse/copy Google cookies | cookie คือ bearer credential, ทำลาย isolation และไม่ใช่ supported login flow |
-| backend vault/credential broker | เป็น solution boundary ที่เป็นไปได้ แต่ผิดข้อ 5 และยังรับประกันว่าจะไม่มี MFA/CAPTCHA/risk challenge ไม่ได้ |
-| Google federation/SSO | เป็น supported direction แต่ถูกตัดออกโดย requirement |
-
-Formal contradiction: fresh isolated Google session ต้องมี Google-accepted proof `P`; `P` มาจาก user interaction, client-held authenticator/session, external authority หรือ existing session ได้เท่านั้น ข้อ 3, 5, 6 และ 7 ปิดทุกแหล่งพร้อมกัน ดังนั้นเซตแหล่งที่มาของ `P` ว่าง และไม่มี browser API ที่สร้าง `P` จาก POC credential ได้เอง
-
-### Red-team finding: virtual WebAuthn loophole
-
-หลังตรวจซ้ำพบช่องทางเชิงกลไกที่ต้องแยกออกจาก production solution ให้ชัด: extension ที่ขอสิทธิ์ `debugger` สามารถส่ง Chrome DevTools Protocol คำสั่งใน WebAuthn domain เพื่อสร้าง virtual authenticator, import credential private key และจำลอง user presence/user verification ได้
-
-ถ้า enroll public key นั้นกับ Google ไว้หนึ่งครั้งและ Google ยอมรับ assertion ใน fresh InPrivate run กลไกนี้อาจเข้า Gemini โดยไม่ใช้ password/cookie/token ได้ แต่ไม่ได้แก้ credential-source problem เพราะต้อง persist **Google-registered WebAuthn private key** ระหว่าง browser restarts นอกจากนี้ CDP ระบุว่าความสามารถนี้มีไว้ทดสอบ WebAuthn API, เป็น experimental และจำลอง security boundary ที่ real authenticator ตั้งใจบังคับ
-
-ดังนั้นข้อสรุป formal ต้องห้าม reusable authentication proof ทุกชนิด ไม่ใช่ห้ามเพียง password/cookie/token:
-
-> extension, static assets และ managed policy ห้าม persist authentication private key หรือ reusable authentication proof ทุกชนิด
-
-ภายใต้เงื่อนไขนี้ virtual authenticator ไม่ใช่ loophole อีกต่อไป Production extension จึงห้ามขอ `debugger` permission, ห้ามใช้ CDP WebAuthn และห้ามเก็บ passkey private key การทดลองกลไกนี้ทำได้เฉพาะ throwaway spike ด้วย disposable account เท่านั้น ห้ามใช้บัญชีองค์กรจริงและห้ามเรียกว่า supported solution
-
-การเข้ารหัส Google password ด้วย POC password ไม่แก้ปัญหา: static client ต้องมี ciphertext, salt, KDF และโค้ดถอดรหัสครบ ผู้โจมตีจึงทำ offline guessing ได้ และ plaintext ยังต้องปรากฏใน browser/extension memory หลังถอดรหัส
-
-## Evidence จาก production E2E
-
-- Firebase production origin ติดต่อ extension protocol 4 ได้
-- Extension เปิด InPrivate window และส่ง target email ถึง `EMAIL_SUBMITTED` ได้
-- Google ไปที่ password challenge และ POC จบ `USER_ACTION_REQUIRED`
-- ไม่พบ Gemini document และไม่ยืนยัน target account
-- หลัง provision normal Edge session ของ target account สำเร็จ การเปิด InPrivate ใหม่ยังจบ `USER_ACTION_REQUIRED`
-
-ผลนี้พิสูจน์ orchestration และ fail-closed behavior เท่านั้น ไม่ใช่ successful login
-
-## Solution boundaries ที่ทำได้จริง
-
-### A. Supported production direction
-
-ใช้ Google-supported federation/SSO หรือ API-based integration แทนการ script password หน้า Google นี่เป็นแนวทางที่ควบคุมสิทธิ์, revoke, audit และ MFA ได้ถูก boundary
-
-### B. Credential broker experiment
-
-ใช้ trusted backend vault ปล่อย secret เฉพาะเครื่อง/ผู้ใช้ที่ผ่านการอนุญาต แล้วให้ client ใช้ชั่วคราวโดยไม่ persist แนวทางนี้แก้เรื่อง static secret source แต่ยังเป็น scripted password login ที่ Google อาจหยุดด้วย MFA, CAPTCHA, passkey หรือ risk challenge จึงไม่รับประกัน zero-touch และไม่ใช่ solution ตามข้อจำกัดปัจจุบัน
-
-### C. Dedicated pre-authenticated browser profile
-
-Provision target Google session ใน dedicated persistent profile แล้วเปิด Gemini ใน profile เดิม ผู้ใช้ไม่ต้องกรอกรหัสทุกครั้ง แต่เป็น session reuse ไม่ใช่ fresh isolated login และ extension API เลือก profile โดยตรงไม่ได้ แนวทางนี้จึงต้องมี launcher/policy เพิ่มและอยู่นอก extension-only requirement
+วันที่: 2026-08-30
 
 ## Decision
 
-เก็บ v0.5.0 เป็น honest negative POC สำหรับทดสอบ extension orchestration เท่านั้น ห้ามฝัง credential จริงหรือเปลี่ยนสถานะเป็น success โดยไม่มี `GEMINI_TARGET_ACCOUNT_CONFIRMED` จาก fresh isolated run
+ใช้ Chromium MV3 Extension เป็น browser agent และใช้ Native Messaging host แบบ one-shot เป็นขอบเขตเดียวที่อ่าน Google credential จาก Windows Credential Manager
 
-ถ้าต้องส่งมอบ flow 1-4 จริง ต้องผ่อนอย่างน้อยหนึ่ง authentication-proof boundary: อนุญาต supported federation/SSO, อนุญาต trusted credential broker พร้อมยอมรับ Google challenge risk, อนุญาต client-held authenticator หรือยอมใช้ pre-authenticated session การซ่อน Google UI หรือเรียกว่า “แอบ login” ไม่ใช่การเพิ่มแหล่ง proof
+หน้า Firebase ติดต่อ Native Messaging host โดยตรงไม่ได้ หน้าเว็บติดต่อเฉพาะ Extension ผ่าน `externally_connectable`; Extension เป็นผู้ตรวจ Firebase ID token, สร้าง InPrivate window, เรียก host, ควบคุม Google login document, ยืนยัน target account และ post prompt
+
+## เหตุผล
+
+Extension อย่างเดียวอ่าน Windows Credential Manager ไม่ได้ และการฝัง Google password/ciphertext ใน static site หรือ extension package ทำให้ secret ถูกดาวน์โหลดและวิเคราะห์ได้ การใช้ custom protocol จะมี browser confirmation prompt และ response channel ที่ซับซ้อนกว่า Native Messaging
+
+Native Messaging ให้คุณสมบัติที่ POC ต้องการ:
+
+- จำกัด caller ด้วย fixed Extension ID ใน host manifest
+- ใช้ length-prefixed stdin/stdout โดยไม่เปิด localhost port
+- process ถูกสร้างต่อ request และจบหลัง response เดียว
+- Google password ไม่อยู่ใน Firebase, Git, ZIP, browser storage หรือ command line
+- register ได้ใน HKCU ทั้ง Edge และ Chrome โดยไม่ต้อง admin หรือ reboot
+
+## Authentication gates
+
+หน้า POC ใช้ Firebase Email/Password Authentication จริง `O1234567` ถูก map ไปยัง internal Firebase email หน้าเว็บเก็บเฉพาะ ID token แบบ session-scoped และล้าง password input หลัง request
+
+Extension ไม่เชื่อ boolean จากหน้าเว็บ แต่ส่ง ID tokenไป `accounts:lookup` และยอมเริ่ม Agent เฉพาะ Firebase user ที่กำหนด จากนั้น request ถูกผูกกับ random UUID, InPrivate tab และ Firebase UID เดียวกัน Prompt submission ต้องยืนยัน ID token ซ้ำ
+
+## Google credential lifecycle
+
+1. Google password ไม่ถูกเรียกจนกว่าจะพบ `/challenge/pwd` และ document แสดง exact target account เพียงบัญชีเดียว
+2. Native host อ่าน Generic Credential target `ESB.GeminiBroker.CodeAssist04`
+3. Host ส่ง credential หนึ่ง response แล้ว exit
+4. Extension ใช้ค่ากับ password document เดิมและล้าง object reference ทันที
+5. ค่าไม่ถูกใส่ใน run status, log, `chrome.storage`, web storage หรือไฟล์
+
+JavaScript และ .NET ไม่รับประกัน deterministic zeroization ของ immutable strings ดังนั้นคำว่า one-shot หมายถึงไม่มี persistence, ไม่มี cache และจำกัด lifetime/process ไม่ใช่การอ้างว่า memory forensic เป็นไปไม่ได้
+
+## Isolation and visibility
+
+Extension ขอ `incognito: spanning` และผู้ดูแลเปิด Allow in InPrivate/Incognito หนึ่งครั้ง แต่ละ run สร้าง InPrivate window ใหม่แบบ minimized ผู้ใช้เห็นหน้าต่างต่อเมื่อ Gemini content script ยืนยัน target account สำเร็จ
+
+นี่คือ isolated cookie/site-data context ไม่ใช่ Windows security sandbox และไม่ใช่ browser profile ใหม่ เมื่อปิด InPrivate windows ทั้งหมด cookie store ของ context นั้นต้องถูกล้าง
+
+## Fail-closed cases
+
+Extension ปิด run window และไม่ให้ผู้ใช้กรอก Google password เมื่อพบ:
+
+- MFA/OTP/phone challenge
+- CAPTCHA
+- passkey หรือ device approval
+- password page ที่ไม่มี exact target-account evidence
+- credential target หายหรือไม่ตรง target email
+- Gemini โหลดแต่ยืนยันบัญชีเป้าหมายไม่ได้
+
+Google อาจเปลี่ยน DOM หรือใช้ risk-based challenge ได้เสมอ POC นี้ไม่ bypass Google security และ successful E2E ต้องพิสูจน์ใหม่กับ account/environment ที่ใช้งานจริง
+
+## Cost boundary
+
+Deploy เฉพาะ Firebase Authentication configuration และ static Hosting ไม่มี Functions, Cloud Run, App Hosting หรือ long-running process จึงไม่มี minimum replicas และไม่มี idle compute component ให้ตั้งมากกว่า zero
+
+## Rejected alternatives
+
+| ทางเลือก | เหตุผลที่ไม่เลือก |
+| --- | --- |
+| ฝัง password/hash-encrypted password ในเว็บหรือ Extension | client ได้ ciphertext/key path ครบและทำ offline analysis ได้ |
+| copy Google cookies/session | bearer credential, ทำลาย fresh isolation และไม่ใช่ supported sign-in |
+| pre-authenticated profile | ต้อง reuse session และ Extension API เลือก profile โดยตรงไม่ได้ |
+| custom protocol | browser prompt, one-way launch และเพิ่ม attack surface |
+| localhost listener | ต้องมี resident process/port และ lifecycle ซับซ้อนกว่า one-shot host |
+| WebAuthn ผ่าน `debugger`/CDP | experimental test mechanism, ต้อง persist reusable private key และขยาย permission สูงเกิน POC |
+| SSO/SAML | ถูกตัดออกจากขอบเขตงานนี้ |

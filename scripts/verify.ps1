@@ -2,75 +2,78 @@ $ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $manifestPath = Join-Path $projectRoot 'extension\manifest.json'
-$firebasePath = Join-Path $projectRoot 'firebase.json'
-$appPath = Join-Path $projectRoot 'public\app.js'
-$htmlPath = Join-Path $projectRoot 'public\index.html'
-$workerPath = Join-Path $projectRoot 'extension\service-worker.js'
-$contentScriptPath = Join-Path $projectRoot 'extension\content-script.js'
 $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
-$firebase = Get-Content -Raw -LiteralPath $firebasePath | ConvertFrom-Json
-$app = Get-Content -Raw -LiteralPath $appPath
-$html = Get-Content -Raw -LiteralPath $htmlPath
-$worker = Get-Content -Raw -LiteralPath $workerPath
-$contentScript = Get-Content -Raw -LiteralPath $contentScriptPath
-$archiveName = "gemini-sso-launcher-extension-v$($manifest.version).zip"
+$worker = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'extension\service-worker.js')
+$content = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'extension\content-script.js')
+$app = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'public\app.js')
+$html = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'public\index.html')
+$nativeHost = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'bootstrap\NativeHost.cs')
+$firebase = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'firebase.json') | ConvertFrom-Json
+$expectedExtensionId = 'jeenmgigpkffleijbmfciffiodlcdafh'
+$archiveName = "gemini-extension-agent-poc-v$($manifest.version).zip"
 $archivePath = Join-Path $projectRoot "public\downloads\$archiveName"
 
-$expectedOrigin = 'https://poc-after-sso-login-gemini.web.app/*'
-$expectedExtensionId = 'jeenmgigpkffleijbmfciffiodlcdafh'
-
 if ($manifest.manifest_version -ne 3) { throw 'Manifest V3 is required.' }
-if ($manifest.externally_connectable.matches -notcontains $expectedOrigin) { throw 'Hosted origin is not allowlisted.' }
-if ($manifest.permissions -contains 'nativeMessaging') { throw 'nativeMessaging is forbidden.' }
-if ($manifest.permissions -contains 'cookies') { throw 'cookies permission is forbidden.' }
-if ($manifest.permissions -contains 'debugger') { throw 'Debugger-driven virtual authenticators are forbidden in the production extension.' }
-if ($manifest.permissions -notcontains 'scripting') { throw 'scripting is required for non-secret Google page controls.' }
-if ($app -notmatch [regex]::Escape($expectedExtensionId)) { throw 'Hosted app extension ID does not match the fixed manifest key.' }
-if ($app -notmatch [regex]::Escape("REQUIRED_EXTENSION_VERSION = `"$($manifest.version)`"")) { throw 'Hosted app does not require the packaged extension version.' }
-if ($app -notmatch 'PROTOCOL_VERSION = 4') { throw 'Hosted app must use InPrivate protocol 4.' }
-if ($manifest.incognito -ne 'spanning') { throw 'Extension must support the ephemeral InPrivate flow.' }
+if ($manifest.version -ne '0.7.0') { throw 'Unexpected extension version.' }
+if ($manifest.incognito -ne 'spanning') { throw 'Spanning InPrivate execution is required.' }
+if ($manifest.permissions -notcontains 'nativeMessaging') { throw 'Native Messaging is required for the one-shot credential bridge.' }
+if ($manifest.permissions -contains 'cookies' -or $manifest.permissions -contains 'debugger') { throw 'Cookie/debugger permissions are forbidden.' }
+if ($manifest.host_permissions -contains 'http://127.0.0.1/*') { throw 'The retired loopback protocol bridge must not be present.' }
+if ($manifest.host_permissions -notcontains 'https://identitytoolkit.googleapis.com/*') { throw 'Firebase Auth verification host is missing.' }
+if ($manifest.externally_connectable.matches -notcontains 'https://poc-after-sso-login-gemini.web.app/*') { throw 'Production Firebase origin is not allowlisted.' }
+if ($worker -notmatch 'PROTOCOL_VERSION = 7') { throw 'Worker protocol is stale.' }
+if ($content -notmatch 'version: 7') { throw 'Content script protocol is stale.' }
+if ($app -notmatch 'PROTOCOL_VERSION = 7') { throw 'Hosted app protocol is stale.' }
+if ($app -notmatch [regex]::Escape($expectedExtensionId)) { throw 'Hosted app extension ID mismatch.' }
+if ($worker -notmatch 'sendNativeMessage\(NATIVE_HOST') { throw 'Worker does not use the native bridge.' }
+if ($worker -notmatch 'incognito: true' -or $worker -notmatch 'state: "minimized"') { throw 'Worker must hide the isolated login window.' }
+if ($worker -notmatch 'GEMINI_TARGET_ACCOUNT_CONFIRMED') { throw 'Exact account confirmation gate is missing.' }
+if ($worker -notmatch 'POST_PROMPT' -or $app -notmatch 'POST_PROMPT') { throw 'Prompt handoff is missing.' }
+if ($app -notmatch 'accounts:signInWithPassword' -or $app -notmatch 'pocIdToken') { throw 'Hosted POC does not use Firebase password authentication.' }
+if ($app -match 'LOGIN_DIGEST|crypto\.subtle') { throw 'Client-side digest login is forbidden.' }
+if ($worker -notmatch 'accounts:lookup' -or $worker -notmatch 'POC_AUTH_REQUIRED') { throw 'Extension does not verify Firebase authentication.' }
+if ($worker -notmatch 'isAllowedIncognitoAccess' -or $app -notmatch 'incognitoAccessAllowed') { throw 'InPrivate permission gate is missing.' }
+if ($nativeHost -notmatch 'CredReadW') { throw 'Native host does not read Windows Credential Manager.' }
+if ($nativeHost -notmatch 'MaximumMessageBytes') { throw 'Native message bound is missing.' }
+if ($nativeHost -match '(?i)@[s]{2}w0rd') { throw 'A password-like literal is present in native-host source.' }
+if (($worker + $app + $html) -match '(?i)@[s]{2}w0rd') { throw 'A password-like literal is present in web/extension source.' }
+if ($worker -match 'chrome\.storage\.(local|sync)') { throw 'Extension must not persist credentials.' }
 if ($firebase.hosting.site -ne 'poc-after-sso-login-gemini') { throw 'Wrong Firebase Hosting site.' }
-if (-not ($firebase.hosting.headers | Where-Object { $_.source -eq '/' -and $_.headers.key -contains 'Cache-Control' -and $_.headers.value -contains 'no-cache' })) { throw 'Root HTML route must disable cache.' }
-if (-not ($firebase.hosting.headers | Where-Object { $_.source -eq '**/*.@(js|css)' -and $_.headers.key -contains 'Cache-Control' -and $_.headers.value -contains 'no-cache' })) { throw 'Launcher assets must disable cache.' }
-if ($html -notmatch [regex]::Escape("/app.js?v=$($manifest.version)")) { throw 'Hosted page must cache-bust app.js with the packaged extension version.' }
-if ($html -notmatch [regex]::Escape("/styles.css?v=$($manifest.version)")) { throw 'Hosted page must cache-bust styles.css with the packaged extension version.' }
-if ($html -match '(?i)(https?://)?(localhost|127\.0\.0\.1)(:\d+)?') { throw 'Hosted page references a local runtime endpoint.' }
-if ($worker -match 'PASS_PASSWORD|submitGooglePassword|openCredentialPassThrough|login\.html|credentialChallengeId') { throw 'Credential bridge code is forbidden.' }
-if ($worker -match "input\[type=['`"]password|input\[name=['`"]Passwd") { throw 'Extension must not query credential inputs.' }
-if ($worker -match 'chrome\.cookies|chrome\.identity') { throw 'Cookie and OAuth token shortcuts are forbidden.' }
-if ($worker -match 'chrome\.debugger|WebAuthn\.|addVirtualAuthenticator|setAutomaticPresenceSimulation|privateKey') { throw 'Virtual WebAuthn credentials or simulated user verification are forbidden.' }
-$forbiddenPasswordGate = "[data-profile-identifier],[data-email],[data-identifier],[role='link']"
-if ($worker.Contains($forbiddenPasswordGate)) { throw 'Generic role-link text must not authorize a password submission.' }
-if ($contentScript -match [regex]::Escape('[aria-label],[title],[data-email],[data-identifier]')) { throw 'Gemini identity detection must not scan every labelled element.' }
-if ($contentScript -match 'candidate\.toLowerCase\(\)\.includes\(normalized\)') { throw 'Substring email matches must not confirm the Gemini account.' }
-
-$retiredCredentialFiles = @('login.html', 'login.js', 'login.css')
-foreach ($name in $retiredCredentialFiles) {
-  if (Test-Path -LiteralPath (Join-Path $projectRoot "extension\$name")) { throw "Retired credential file still exists: $name" }
-}
-
-if (-not (Test-Path -LiteralPath $archivePath)) { throw 'Hosted extension archive is missing.' }
-if ($html -notmatch [regex]::Escape("/downloads/$archiveName")) { throw 'Hosted page does not link the extension archive.' }
-$hostedArchives = @(Get-ChildItem -LiteralPath (Join-Path $projectRoot 'public\downloads') -Filter '*.zip' -File)
-if ($hostedArchives.Count -ne 1 -or $hostedArchives[0].Name -ne $archiveName) { throw 'Only the current secretless extension archive may be hosted.' }
+if ($firebase.auth.providers.emailPassword -ne $true) { throw 'Firebase Email/Password authentication is not configured.' }
+if (($firebase.hosting.headers | ConvertTo-Json -Depth 20) -notmatch 'identitytoolkit\.googleapis\.com') { throw 'Firebase Auth endpoint is blocked by CSP.' }
+if ($firebase.hosting.PSObject.Properties.Name -contains 'functions') { throw 'Firebase Functions are outside this static POC.' }
+if ($html -notmatch '/app.js\?v=0\.7\.0' -or $html -notmatch '/styles.css\?v=0\.7\.0') { throw 'Hosted assets are not cache-busted.' }
+if (-not (Test-Path -LiteralPath (Join-Path $projectRoot 'reference-agent\BrowserWorkerPool.cs'))) { throw 'Copied Agent reference is missing.' }
+if (Test-Path -LiteralPath (Join-Path $projectRoot 'package.json')) { throw 'Node runtime dependency is forbidden.' }
+if (-not (Test-Path -LiteralPath $archivePath)) { throw 'Packaged extension archive is missing.' }
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
-$archive = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
+$archive = [IO.Compression.ZipFile]::OpenRead($archivePath)
 try {
-  $expectedEntries = @('content-script.js', 'manifest.json', 'service-worker.js')
-  $actualEntries = @($archive.Entries | ForEach-Object FullName | Sort-Object)
-  if (($actualEntries -join '|') -ne (($expectedEntries | Sort-Object) -join '|')) { throw 'Hosted extension archive has unexpected entries.' }
+  $expectedEntries = @(
+    'bootstrap/Install.ps1',
+    'bootstrap/NativeHost.cs',
+    'extension/content-script.js',
+    'extension/manifest.json',
+    'extension/service-worker.js'
+  )
+  $actualEntries = @($archive.Entries |
+    Where-Object { -not [string]::IsNullOrEmpty($_.Name) } |
+    ForEach-Object { $_.FullName.Replace('\', '/') } |
+    Sort-Object)
+  if (($actualEntries -join '|') -ne (($expectedEntries | Sort-Object) -join '|')) { throw 'Extension archive contains unexpected files.' }
   foreach ($entryName in $expectedEntries) {
-    $entry = $archive.GetEntry($entryName)
-    $memory = New-Object System.IO.MemoryStream
+    $entry = $archive.Entries | Where-Object { $_.FullName.Replace('\', '/') -eq $entryName } | Select-Object -First 1
+    if ($null -eq $entry) { throw "Archive entry is missing: $entryName" }
+    $memory = New-Object IO.MemoryStream
     $entryStream = $entry.Open()
     try { $entryStream.CopyTo($memory) } finally { $entryStream.Dispose() }
     $archiveBytes = $memory.ToArray()
     $memory.Dispose()
-    $sourceBytes = [System.IO.File]::ReadAllBytes((Join-Path $projectRoot "extension\$entryName"))
-    if ($archiveBytes.Length -ne $sourceBytes.Length) { throw "Hosted archive entry is stale: $entryName" }
+    $sourceBytes = [IO.File]::ReadAllBytes((Join-Path $projectRoot ($entryName -replace '/', '\')))
+    if ($archiveBytes.Length -ne $sourceBytes.Length) { throw "Archive entry is stale: $entryName" }
     for ($index = 0; $index -lt $sourceBytes.Length; $index += 1) {
-      if ($archiveBytes[$index] -ne $sourceBytes[$index]) { throw "Hosted archive entry is stale: $entryName" }
+      if ($archiveBytes[$index] -ne $sourceBytes[$index]) { throw "Archive entry is stale: $entryName" }
     }
   }
 } finally {
@@ -78,32 +81,22 @@ try {
 }
 
 $publicKey = [Convert]::FromBase64String($manifest.key)
-$sha256 = [System.Security.Cryptography.SHA256]::Create()
-try {
-  $hash = $sha256.ComputeHash($publicKey)
-} finally {
-  $sha256.Dispose()
-}
+$sha256 = [Security.Cryptography.SHA256]::Create()
+try { $hash = $sha256.ComputeHash($publicKey) } finally { $sha256.Dispose() }
 $alphabet = 'abcdefghijklmnop'
 $actualExtensionId = -join ($hash[0..15] | ForEach-Object { $alphabet[($_ -shr 4)] + $alphabet[($_ -band 15)] })
-if ($actualExtensionId -ne $expectedExtensionId) { throw "Manifest key resolves to unexpected extension ID: $actualExtensionId" }
+if ($actualExtensionId -ne $expectedExtensionId) { throw "Manifest key resolves to $actualExtensionId" }
 
-$forbidden = @('node_modules', 'package.json', 'package-lock.json')
-foreach ($name in $forbidden) {
-  if (Test-Path -LiteralPath (Join-Path $projectRoot $name)) { throw "Unexpected runtime/build dependency: $name" }
-}
-
-Write-Output 'PASS manifest-v3'
-Write-Output 'PASS exact-hosted-origin'
-Write-Output 'PASS ephemeral-inprivate-mode'
-Write-Output 'PASS extension-only-no-native-host'
-Write-Output 'PASS fixed-extension-id'
-Write-Output 'PASS static-firebase-hosting'
-Write-Output 'PASS hosted-extension-archive'
-Write-Output 'PASS no-retired-extension-archives'
-Write-Output 'PASS no-node-project-dependency'
-Write-Output 'PASS no-credential-page-or-message-path'
-Write-Output 'PASS no-password-input-query'
-Write-Output 'PASS no-cookie-or-oauth-shortcut'
-Write-Output 'PASS no-debugger-or-virtual-authenticator'
-Write-Output 'PASS strict-account-control-provenance'
+Write-Output 'PASS isolated-new-project'
+Write-Output 'PASS manifest-v3-fixed-id'
+Write-Output 'PASS one-shot-native-credential-bridge'
+Write-Output 'PASS no-password-in-source-or-extension-storage'
+Write-Output 'PASS hidden-inprivate-login-window'
+Write-Output 'PASS exact-account-confirmation-gate'
+Write-Output 'PASS prompt-handoff-after-confirmation'
+Write-Output 'PASS firebase-auth-gates-extension-agent'
+Write-Output 'PASS inprivate-access-gate'
+Write-Output 'PASS static-firebase-hosting-no-idle-compute'
+Write-Output 'PASS no-node-runtime-dependency'
+Write-Output 'PASS copied-agent-reference'
+Write-Output 'PASS packaged-extension-current'

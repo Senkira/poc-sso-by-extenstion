@@ -1,219 +1,173 @@
 "use strict";
 
+const assert = require("assert/strict");
 const fs = require("fs");
 const vm = require("vm");
-const assert = require("assert/strict");
 
 function element() {
   return {
     className: "",
     disabled: false,
+    hidden: false,
     listeners: {},
     textContent: "",
+    value: "",
     addEventListener(type, listener) { this.listeners[type] = listener; }
   };
 }
 
-const elements = new Map([
-  ["#connection-badge", element()],
-  ["#connection-detail", element()],
-  ["#launch-button", element()],
-  ["#retry-button", element()],
-  ["#request-value", element()],
-  ["#stage-value", element()],
-  ["#origin-value", element()],
-  ["#document-value", element()],
-  ["#account-value", element()],
-  ["#note-value", element()],
-  ["#extension-id", element()]
-]);
-const ids = [
-  "123e4567-e89b-42d3-a456-426614174000",
-  "123e4567-e89b-42d3-a456-426614174001",
-  "123e4567-e89b-42d3-a456-426614174002"
+const selectors = [
+  "#login-panel", "#launcher-panel", "#login-form", "#username", "#password",
+  "#login-button", "#logout-button", "#login-error", "#connection-badge",
+  "#connection-detail", "#launch-button", "#retry-button", "#prompt",
+  "#prompt-button", "#request-value", "#stage-value", "#origin-value",
+  "#credential-value", "#account-value", "#note-value", "#extension-id"
 ];
-let uuidIndex = 0;
-let pingVersion = "0.5.0";
-let pingProtocol = 4;
-let incognitoAccessAllowed = true;
-let statusMode = "pending-first";
-let pendingOldPoll = null;
-let now = 1000;
-let nextTimer = 1;
-const timers = new Map();
+const elements = new Map(selectors.map((selector) => [selector, element()]));
+const stored = new Map();
+const idToken = "firebase-id-token".padEnd(160, "x");
+const requestId = "123e4567-e89b-42d3-a456-426614174000";
+const messages = [];
+let fetchCount = 0;
+
+const sessionStorage = {
+  getItem(key) { return stored.has(key) ? stored.get(key) : null; },
+  setItem(key, value) { stored.set(key, String(value)); },
+  removeItem(key) { stored.delete(key); }
+};
 
 const chrome = {
   runtime: {
     lastError: null,
     sendMessage(extensionId, message, callback) {
       assert.equal(extensionId, "jeenmgigpkffleijbmfciffiodlcdafh");
-      assert.equal(message.version, 4);
+      messages.push(message);
       if (message.type === "PING") {
         callback({
           ok: true,
-          version: pingVersion,
-          protocolVersion: pingProtocol,
-          capability: "INPRIVATE_BROWSER_CREDENTIAL_LAUNCHER",
-          incognitoAccessAllowed
+          version: "0.7.0",
+          protocolVersion: 7,
+          capability: "EXTENSION_AGENT_ONE_SHOT_BRIDGE",
+          incognitoAccessAllowed: true
         });
         return;
       }
-      if (message.type === "OPEN_GEMINI") {
+      assert.equal(message.pocIdToken, idToken);
+      if (message.type === "START_AGENT") {
         callback({
           ok: true,
           run: {
             requestId: message.requestId,
-            stage: "ACCOUNT_SELECTED",
-            updatedAt: 1,
-            observedOrigin: "https://accounts.google.com",
-            documentObserved: false,
-            targetAccountConfirmed: false,
-            identityCheckComplete: false,
-            closed: false,
-            note: "Account selected"
+            stage: "GEMINI_TARGET_ACCOUNT_CONFIRMED",
+            observedOrigin: "https://gemini.google.com",
+            credentialDelivered: true,
+            targetAccountConfirmed: true,
+            identityCheckComplete: true,
+            closed: false
           }
         });
         return;
       }
-      if (message.type === "GET_STATUS" && statusMode === "pending-first" && message.requestId === ids[0]) {
-        pendingOldPoll = callback;
-        return;
-      }
-      if (statusMode === "missing") {
-        callback({ ok: false, error: "RUN_NOT_FOUND" });
-        return;
-      }
-      if (statusMode === "action-required") {
+      if (message.type === "POST_PROMPT") {
         callback({
           ok: true,
           run: {
             requestId: message.requestId,
-            stage: "USER_ACTION_REQUIRED",
-            updatedAt: 4,
-            observedOrigin: "https://accounts.google.com",
-            documentObserved: false,
-            targetAccountConfirmed: false,
-            identityCheckComplete: false,
-            closed: false,
-            note: "No silent credential source"
+            stage: "PROMPT_SUBMITTED",
+            observedOrigin: "https://gemini.google.com",
+            credentialDelivered: true,
+            targetAccountConfirmed: true,
+            identityCheckComplete: true,
+            closed: false
           }
         });
         return;
       }
-      callback({
-        ok: true,
-        run: {
-          requestId: message.requestId,
-          stage: "GEMINI_TARGET_ACCOUNT_CONFIRMED",
-          updatedAt: 5,
-          observedOrigin: "https://gemini.google.com",
-          documentObserved: true,
-          targetAccountConfirmed: true,
-          identityCheckComplete: true,
-          closed: false,
-          note: "Target confirmed"
-        }
-      });
+      callback({ ok: false, error: "UNEXPECTED_MESSAGE" });
     }
   }
 };
 
-vm.runInNewContext(
-  fs.readFileSync("public/app.js", "utf8"),
-  {
-    chrome,
-    crypto: { randomUUID: () => ids[uuidIndex++] },
-    Date: { now: () => now },
-    Error,
-    Promise,
-    Set,
-    document: { querySelector: (selector) => elements.get(selector) },
-    setTimeout(callback) {
-      const id = nextTimer++;
-      timers.set(id, callback);
-      return id;
-    },
-    clearTimeout(id) { timers.delete(id); }
+const timers = new Map();
+let timerId = 0;
+const context = {
+  chrome,
+  crypto: { randomUUID: () => requestId },
+  document: { querySelector: (selector) => elements.get(selector) },
+  sessionStorage,
+  fetch: async (url, options) => {
+    fetchCount += 1;
+    assert.match(url, /accounts:signInWithPassword/);
+    const body = JSON.parse(options.body);
+    assert.equal(body.email, "o1234567@poc.invalid");
+    assert.equal(body.password, "test-password");
+    return {
+      ok: true,
+      async json() {
+        return {
+          idToken,
+          refreshToken: "discard-me",
+          email: "o1234567@poc.invalid",
+          expiresIn: "3600"
+        };
+      }
+    };
+  },
+  setTimeout(callback) { timerId += 1; timers.set(timerId, callback); return timerId; },
+  clearTimeout(id) { timers.delete(id); },
+  URL,
+  Date,
+  Error,
+  Promise,
+  Set,
+  encodeURIComponent
+};
+
+vm.runInNewContext(fs.readFileSync("public/app.js", "utf8"), context);
+
+async function flush(rounds = 6) {
+  for (let index = 0; index < rounds; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
   }
-);
-
-async function flush() {
-  await new Promise((resolve) => setImmediate(resolve));
-}
-
-async function fireOnlyTimer() {
-  assert.equal(timers.size, 1);
-  const [id, callback] = timers.entries().next().value;
-  timers.delete(id);
-  callback();
-  await flush();
 }
 
 async function main() {
+  assert.equal(elements.get("#login-panel").hidden, false);
+  assert.equal(elements.get("#launcher-panel").hidden, true);
+
+  elements.get("#username").value = "O1234567";
+  elements.get("#password").value = "test-password";
+  elements.get("#login-form").listeners.submit({ preventDefault() {} });
   await flush();
+
+  assert.equal(fetchCount, 1);
+  assert.equal(stored.get("poc-firebase-id-token"), idToken);
+  assert.equal(elements.get("#password").value, "");
+  assert.equal(elements.get("#login-panel").hidden, true);
+  assert.equal(elements.get("#launcher-panel").hidden, false);
   assert.equal(elements.get("#connection-badge").textContent, "Connected");
 
-  const launch = elements.get("#launch-button").listeners.click;
-  await launch();
-  await fireOnlyTimer();
-  assert.ok(pendingOldPoll, "first run poll must remain pending");
-
-  statusMode = "confirmed";
-  await launch();
-  assert.equal(timers.size, 1, "new run must have exactly one scheduled poll");
-  await fireOnlyTimer();
-  assert.equal(elements.get("#stage-value").textContent, "GEMINI_TARGET_ACCOUNT_CONFIRMED");
+  elements.get("#launch-button").listeners.click();
+  await flush();
+  assert.equal(messages.some((message) => message.type === "START_AGENT"), true);
   assert.equal(elements.get("#account-value").textContent, "Confirmed");
-  assert.equal(timers.size, 0, "terminal success must stop polling");
+  assert.equal(elements.get("#prompt-button").disabled, false);
 
-  pendingOldPoll({
-    ok: true,
-    run: {
-      requestId: ids[0],
-      stage: "USER_ACTION_REQUIRED",
-      updatedAt: 99,
-      observedOrigin: "https://accounts.google.com",
-      documentObserved: false,
-      targetAccountConfirmed: false,
-      identityCheckComplete: false,
-      closed: false,
-      note: "stale"
-    }
-  });
+  elements.get("#prompt").value = "POC test prompt";
+  elements.get("#prompt-button").listeners.click();
   await flush();
-  assert.equal(elements.get("#stage-value").textContent, "GEMINI_TARGET_ACCOUNT_CONFIRMED");
+  assert.equal(messages.some((message) => message.type === "POST_PROMPT"), true);
+  assert.equal(elements.get("#prompt").value, "");
 
-  statusMode = "missing";
-  await launch();
-  await fireOnlyTimer();
-  assert.equal(elements.get("#stage-value").textContent, "RUN_NOT_FOUND");
-  assert.equal(elements.get("#account-value").textContent, "Unavailable");
+  elements.get("#logout-button").listeners.click();
+  assert.equal(stored.has("poc-firebase-id-token"), false);
+  assert.equal(elements.get("#login-panel").hidden, false);
+  assert.equal(elements.get("#launcher-panel").hidden, true);
 
-  pingVersion = "0.3.0";
-  await elements.get("#retry-button").listeners.click();
-  await flush();
-  assert.equal(elements.get("#connection-badge").textContent, "Not detected");
-  assert.match(elements.get("#connection-detail").textContent, /v0\.3\.0.*v0\.5\.0.*Reload/);
-
-  pingProtocol = 2;
-  await elements.get("#retry-button").listeners.click();
-  await flush();
-  assert.match(elements.get("#connection-detail").textContent, /protocol เก่า.*Reload.*v0\.5\.0/);
-
-  pingVersion = "0.5.0";
-  pingProtocol = 4;
-  incognitoAccessAllowed = false;
-  await elements.get("#retry-button").listeners.click();
-  await flush();
-  assert.equal(elements.get("#connection-badge").textContent, "Not detected");
-  assert.match(elements.get("#connection-detail").textContent, /Allow in InPrivate/);
-
-  console.log("PASS stale-run-poll-failure-isolation");
-  console.log("PASS single-flight-recursive-polling");
-  console.log("PASS terminal-success-stops-polling");
-  console.log("PASS lost-run-clears-current-telemetry");
-  console.log("PASS old-secretful-extension-rejection");
-  console.log("PASS inprivate-access-gate");
+  console.log("PASS firebase-login-replaces-client-digest");
+  console.log("PASS firebase-token-gates-extension-start-and-prompt");
+  console.log("PASS password-field-cleared-after-login");
+  console.log("PASS poc-logout-clears-session-token");
 }
 
 main().catch((error) => {

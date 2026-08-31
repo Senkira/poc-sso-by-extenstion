@@ -1,29 +1,21 @@
 "use strict";
 
-const PROTOCOL_VERSION = 4;
+const PROTOCOL_VERSION = 7;
 const ALLOWED_ORIGIN = "https://poc-after-sso-login-gemini.web.app";
 const TARGET_EMAIL = "codeassist.04@easybuy.co.th";
-const LOGIN_URL = "https://accounts.google.com/AccountChooser?continue=https%3A%2F%2Fgemini.google.com%2Fapp";
+const LOGIN_URL = "https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fgemini.google.com%2Fapp&followup=https%3A%2F%2Fgemini.google.com%2Fapp";
+const NATIVE_HOST = "com.senkira.gemini_extension_agent";
+const FIREBASE_API_KEY = "AIzaSyBAmRwEIELh_AA7E1omzf8TrVV3Cp4HPFc";
+const POC_AUTH_EMAIL = "o1234567@poc.invalid";
 const RUN_TTL_MS = 10 * 60 * 1000;
-const AUTOMATION_RETRY_LIMIT = 4;
-const PASSWORD_MANAGER_SETTLE_MS = 750;
-const BROWSER_AUTH_SETTLE_MS = 4000;
-const AUTH_PENDING_RECHECK_MS = 4000;
-const AUTH_PENDING_RECHECK_LIMIT = 2;
-const PENDING_BROWSER_AUTH_STAGES = new Set([
-  "BROWSER_CREDENTIAL_SUBMIT_REQUESTED",
-  "AUTH_PENDING"
-]);
-const runUpdates = new Map();
-const openOperations = new Map();
-const automationOperations = new Map();
+const AUTOMATION_RETRY_LIMIT = 20;
+const AUTOMATION_RETRY_MS = 250;
+const runs = new Map();
+const tabToRequest = new Map();
+const automationLocks = new Map();
 
-function runKey(requestId) {
-  return `run:${requestId}`;
-}
-
-function tabKey(tabId) {
-  return `tab:${tabId}`;
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function isRequestId(value) {
@@ -42,125 +34,6 @@ function isAllowedExternalSender(sender) {
   }
 }
 
-async function putRun(run) {
-  run.updatedAt = Date.now();
-  await chrome.storage.session.set({ [runKey(run.requestId)]: run });
-  return run;
-}
-
-async function getRun(requestId) {
-  const result = await chrome.storage.session.get(runKey(requestId));
-  const run = result[runKey(requestId)];
-  if (!run) {
-    return null;
-  }
-  if (Date.now() - run.createdAt > RUN_TTL_MS) {
-    await chrome.storage.session.remove(runKey(requestId));
-    return null;
-  }
-  return run;
-}
-
-async function updateRun(requestId, mutate) {
-  const previous = runUpdates.get(requestId) || Promise.resolve();
-  const task = previous.catch(() => {}).then(async () => {
-    const run = await getRun(requestId);
-    if (!run || mutate(run) === false) {
-      return run;
-    }
-    return putRun(run);
-  });
-  runUpdates.set(requestId, task);
-  try {
-    return await task;
-  } finally {
-    if (runUpdates.get(requestId) === task) {
-      runUpdates.delete(requestId);
-    }
-  }
-}
-
-function applyNavigation(run, details, completed, committed = false) {
-  let url;
-  try {
-    url = new URL(details.url);
-  } catch {
-    return false;
-  }
-  const navigationAt = Number.isFinite(details.timeStamp) ? details.timeStamp : Date.now();
-  if (run.closed || navigationAt < (run.lastNavigationAt || 0)) {
-    return false;
-  }
-  if (!committed && details.documentId && run.currentDocumentId
-      && details.documentId !== run.currentDocumentId) {
-    return false;
-  }
-  if (committed && details.documentId && details.documentId !== run.currentDocumentId) {
-    run.currentDocumentId = details.documentId;
-    run.documentObserved = false;
-    run.targetAccountConfirmed = false;
-    run.identityCheckComplete = false;
-    run.automatedDocumentId = null;
-    run.automatedDocumentPath = null;
-    run.authAttemptAt = null;
-    run.authPendingChecks = 0;
-    run.nextAuthCheckAt = null;
-  }
-  run.lastNavigationAt = navigationAt;
-  run.observedOrigin = url.origin;
-  run.observedPath = url.pathname;
-  if (url.origin === "https://accounts.google.com") {
-    const sameDocument = !details.documentId || details.documentId === run.currentDocumentId;
-    const sameAutomatedStep = sameDocument
-      && run.automatedDocumentId === run.currentDocumentId
-      && run.automatedDocumentPath === url.pathname;
-    const pendingBrowserAuthentication = sameDocument
-      && run.automatedDocumentId === run.currentDocumentId
-      && PENDING_BROWSER_AUTH_STAGES.has(run.stage);
-    if (!sameAutomatedStep && !pendingBrowserAuthentication) {
-      run.stage = completed ? "GOOGLE_ACCOUNTS_PAGE_LOADED" : "GOOGLE_ACCOUNTS_NAVIGATED";
-    }
-  } else if (url.origin === "https://gemini.google.com") {
-    run.stage = run.targetAccountConfirmed
-      ? "GEMINI_TARGET_ACCOUNT_CONFIRMED"
-      : run.documentObserved
-        ? "GEMINI_DOCUMENT_OBSERVED"
-        : completed
-          ? "GEMINI_DOCUMENT_LOADED"
-          : "GEMINI_NAVIGATED";
-  } else if (url.protocol === "https:" || url.protocol === "http:") {
-    run.stage = completed ? "EXTERNAL_AUTH_PAGE_LOADED" : "EXTERNAL_AUTH_NAVIGATED";
-  } else {
-    run.stage = completed ? "OTHER_PAGE_LOADED" : "OTHER_PAGE_NAVIGATED";
-  }
-  return true;
-}
-
-async function reconcileCurrentFrame(requestId, tabId) {
-  const frame = await chrome.webNavigation.getFrame({ tabId, frameId: 0 });
-  if (!frame?.url) {
-    return null;
-  }
-  await updateRun(requestId, (run) => {
-    let url;
-    try {
-      url = new URL(frame.url);
-    } catch {
-      return false;
-    }
-    if (frame.documentId && frame.documentId === run.currentDocumentId
-        && url.origin === run.observedOrigin && url.pathname === run.observedPath) {
-      return false;
-    }
-    return applyNavigation(run, {
-      url: frame.url,
-      documentId: frame.documentId,
-      timeStamp: Date.now()
-    }, false, true);
-  });
-  return frame;
-}
-
 function publicRun(run) {
   if (!run) {
     return null;
@@ -174,479 +47,417 @@ function publicRun(run) {
     tabId: Number.isInteger(run.tabId) ? run.tabId : null,
     incognito: run.incognito === true,
     observedOrigin: run.observedOrigin || null,
-    documentObserved: run.documentObserved === true,
     targetAccountConfirmed: run.targetAccountConfirmed === true,
     identityCheckComplete: run.identityCheckComplete === true,
+    credentialDelivered: run.credentialDelivered === true,
     closed: run.closed === true,
     note: run.note || null
   };
 }
 
-async function openGeminiOnce(message) {
-  const existing = await getRun(message.requestId);
-  if (existing) {
-    return { ok: true, run: publicRun(existing), replayed: true };
-  }
-  const run = await putRun({
-    requestId: message.requestId,
-    stage: "OPENING_INPRIVATE_GOOGLE_WINDOW",
-    createdAt: Date.now(),
-    observedOrigin: null,
-    documentObserved: false,
-    targetAccountConfirmed: false,
-    identityCheckComplete: false,
-    closed: false,
-    incognito: true,
-    note: "Ephemeral InPrivate flow: the browser password manager must supply authentication without exposing the credential to the extension."
-  });
-  try {
-    const incognitoAccessAllowed = await chrome.extension.isAllowedIncognitoAccess();
-    if (!incognitoAccessAllowed) {
-      run.stage = "INPRIVATE_ACCESS_REQUIRED";
-      run.note = "Enable Allow in InPrivate for this extension once, then retry.";
-      await putRun(run);
-      return { ok: false, error: "INPRIVATE_ACCESS_REQUIRED", run: publicRun(run) };
-    }
-    const createdWindow = await chrome.windows.create({
-      url: LOGIN_URL,
-      type: "normal",
-      focused: true,
-      incognito: true
-    });
-    const tab = createdWindow.tabs?.[0];
-    if (!tab || !Number.isInteger(tab.id)) {
-      throw new Error("Browser did not return the Google tab.");
-    }
-    await chrome.storage.session.set({ [tabKey(tab.id)]: message.requestId });
-    const savedRun = await updateRun(message.requestId, (current) => {
-      current.windowId = createdWindow.id;
-      current.tabId = tab.id;
-      if (current.stage === "OPENING_INPRIVATE_GOOGLE_WINDOW") {
-        current.stage = "INPRIVATE_GOOGLE_WINDOW_CREATED";
-      }
-    });
-    await reconcileCurrentFrame(message.requestId, tab.id).catch(() => {});
-    const reconciledRun = await getRun(message.requestId);
-    return { ok: true, run: publicRun(reconciledRun || savedRun), replayed: false };
-  } catch (error) {
-    run.stage = "OPEN_FAILED";
-    run.note = error instanceof Error ? error.message : "Unknown launch error";
-    await putRun(run);
-    return { ok: false, error: "OPEN_FAILED", run: publicRun(run) };
-  }
+function updateRun(run, patch) {
+  Object.assign(run, patch, { updatedAt: Date.now() });
+  return run;
 }
 
-function openGemini(message) {
-  if (message.version !== PROTOCOL_VERSION || !isRequestId(message.requestId)) {
-    return Promise.resolve({ ok: false, error: "INVALID_REQUEST" });
+function getRun(requestId) {
+  const run = runs.get(requestId);
+  if (!run) {
+    return null;
   }
-  const pending = openOperations.get(message.requestId);
-  if (pending) {
-    return pending.then((result) => ({ ...result, replayed: true }));
-  }
-  const operation = openGeminiOnce(message);
-  openOperations.set(message.requestId, operation);
-  return operation.finally(() => {
-    if (openOperations.get(message.requestId) === operation) {
-      openOperations.delete(message.requestId);
+  if (Date.now() - run.createdAt > RUN_TTL_MS) {
+    runs.delete(requestId);
+    if (Number.isInteger(run.tabId)) {
+      tabToRequest.delete(run.tabId);
     }
-  });
+    return null;
+  }
+  return run;
 }
 
 async function pingExtension() {
+  const incognitoAccessAllowed = await new Promise((resolve) => {
+    if (typeof chrome.extension?.isAllowedIncognitoAccess !== "function") {
+      resolve(false);
+      return;
+    }
+    chrome.extension.isAllowedIncognitoAccess((allowed) => resolve(allowed === true));
+  });
   return {
     ok: true,
     version: chrome.runtime.getManifest().version,
     protocolVersion: PROTOCOL_VERSION,
-    capability: "INPRIVATE_BROWSER_CREDENTIAL_LAUNCHER",
-    incognitoAccessAllowed: await chrome.extension.isAllowedIncognitoAccess()
+    capability: "EXTENSION_AGENT_ONE_SHOT_BRIDGE",
+    incognitoAccessAllowed
   };
 }
 
-function performGoogleStep(targetEmail, expectedPath) {
-  function clickElement(element) {
-    if (!element) {
-      return false;
+async function verifyPocIdToken(idToken) {
+  if (typeof idToken !== "string" || idToken.length < 100 || idToken.length > 4096) {
+    throw new Error("POC_AUTH_REQUIRED");
+  }
+  const response = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(FIREBASE_API_KEY)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idToken })
     }
-    element.click();
-    return true;
+  );
+  if (!response.ok) {
+    throw new Error("POC_AUTH_REQUIRED");
+  }
+  const payload = await response.json();
+  const user = Array.isArray(payload?.users) ? payload.users[0] : null;
+  if (!user
+      || typeof user.localId !== "string"
+      || user.localId.length === 0
+      || user.email?.toLowerCase() !== POC_AUTH_EMAIL) {
+    throw new Error("POC_AUTH_REQUIRED");
+  }
+  return user.localId;
+}
+
+async function startAgent(message) {
+  if (message.version !== PROTOCOL_VERSION
+      || !isRequestId(message.requestId)) {
+    return { ok: false, error: "INVALID_REQUEST" };
+  }
+  let pocUid;
+  try {
+    pocUid = await verifyPocIdToken(message.pocIdToken);
+  } catch {
+    return { ok: false, error: "POC_AUTH_REQUIRED" };
+  }
+  const existing = getRun(message.requestId);
+  if (existing) {
+    return existing.pocUid === pocUid
+      ? { ok: true, run: publicRun(existing), replayed: true }
+      : { ok: false, error: "POC_AUTH_REQUIRED" };
   }
 
-  function setEmailValue(input, email) {
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-    if (setter) {
-      setter.call(input, email);
-    } else {
-      input.value = email;
-    }
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-  }
+  const run = {
+    requestId: message.requestId,
+    stage: "OPENING_ISOLATED_WINDOW",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    incognito: true,
+    observedOrigin: null,
+    targetAccountConfirmed: false,
+    identityCheckComplete: false,
+    credentialDelivered: false,
+    pocUid,
+    closed: false,
+    note: "Starting the extension agent in a minimized InPrivate window."
+  };
+  runs.set(run.requestId, run);
 
-  function selectedAccountMatches(email) {
-    const normalized = email.toLowerCase();
-    const selectedControls = Array.from(document.querySelectorAll(
-      "[role='link'][jsname='af8ijd'][aria-label]"
-    ));
-    if (selectedControls.length !== 1) {
-      return false;
+  try {
+    const createdWindow = await chrome.windows.create({
+      url: LOGIN_URL,
+      type: "normal",
+      incognito: true,
+      focused: false,
+      state: "minimized"
+    });
+    const tab = createdWindow.tabs?.[0];
+    if (!tab || !Number.isInteger(tab.id)) {
+      throw new Error("Browser did not return the isolated Google tab.");
     }
-    const label = selectedControls[0].getAttribute("aria-label") || "";
-    const emailTokens = label.match(/[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+/gi) || [];
-    const uniqueEmails = [...new Set(emailTokens.map((candidate) => candidate.toLowerCase()))];
-    return uniqueEmails.length === 1 && uniqueEmails[0] === normalized;
+    run.windowId = createdWindow.id;
+    run.tabId = tab.id;
+    tabToRequest.set(tab.id, run.requestId);
+    updateRun(run, {
+      stage: "ISOLATED_WINDOW_CREATED",
+      note: "The isolated window is hidden while the extension agent authenticates."
+    });
+    return { ok: true, run: publicRun(run), replayed: false };
+  } catch (error) {
+    updateRun(run, {
+      stage: "OPEN_FAILED",
+      note: error instanceof Error ? error.message : "Could not open the isolated window."
+    });
+    return { ok: false, error: "OPEN_FAILED", run: publicRun(run) };
   }
+}
 
+function inspectGooglePage(targetEmail) {
+  function exactAccountEvidence(email) {
+    const normalizedEmail = email.toLowerCase();
+    const values = Array.from(document.querySelectorAll(
+      "[data-profile-identifier],[data-email],[data-identifier],[role='link'][aria-label]"
+    )).flatMap((element) => [
+      element.getAttribute("data-profile-identifier"),
+      element.getAttribute("data-email"),
+      element.getAttribute("data-identifier"),
+      element.getAttribute("aria-label")
+    ]).filter(Boolean);
+    const pattern = /[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+/gi;
+    const emails = [...new Set(values.flatMap((value) => value.match(pattern) || [])
+      .map((value) => value.toLowerCase()))];
+    return emails.length === 1 && emails[0] === normalizedEmail;
+  }
+  const normalized = targetEmail.toLowerCase();
   const path = location.pathname;
-  if (path !== expectedPath) {
-    return { step: "STALE_AUTOMATION_STEP" };
-  }
-  const hasManualChallenge = Boolean(document.querySelector(
+  const challenge = Boolean(document.querySelector(
     "iframe[src*='recaptcha'], input[autocomplete='one-time-code'], input[type='tel']"
   ));
-  if (hasManualChallenge) {
+  if (challenge || (/\/challenge\//.test(path) && !/\/challenge\/pwd(?:\/|$)/.test(path))) {
     return { step: "USER_ACTION_REQUIRED" };
   }
 
-  if (/\/challenge\/pwd(?:\/|$)/.test(path)) {
-    if (!selectedAccountMatches(targetEmail)) {
-      return { step: "TARGET_ACCOUNT_NOT_CONFIRMED" };
-    }
-    const next = document.querySelector("#passwordNext button, #passwordNext");
-    return clickElement(next)
-      ? { step: "BROWSER_CREDENTIAL_SUBMIT_REQUESTED" }
-      : { step: "WAITING_FOR_SUPPORTED_FORM" };
+  const passwordInput = document.querySelector("input[name='Passwd'], input[type='password']");
+  if (passwordInput && /\/challenge\/pwd(?:\/|$)/.test(path)) {
+    return exactAccountEvidence(targetEmail)
+      ? { step: "PASSWORD_REQUIRED" }
+      : { step: "TARGET_ACCOUNT_NOT_CONFIRMED" };
   }
 
-  const normalizedEmail = targetEmail.toLowerCase();
-  const accountNode = Array.from(document.querySelectorAll("[data-identifier]")).find((node) =>
-    (node.getAttribute("data-identifier") || "").toLowerCase() === normalizedEmail
+  const targetAccount = Array.from(document.querySelectorAll("[data-identifier]")).find((element) =>
+    (element.getAttribute("data-identifier") || "").toLowerCase() === normalized
   );
-  if (accountNode) {
-    const clickable = accountNode.closest("a,[role='link']")
-      || accountNode.querySelector("a,[role='link']")
-      || accountNode;
-    clickElement(clickable);
+  if (targetAccount) {
+    (targetAccount.closest("a,[role='link']") || targetAccount).click();
     return { step: "ACCOUNT_SELECTED" };
   }
 
-  const emailInput = document.querySelector("input[type='email'], input[name='identifier']");
+  const emailInput = document.querySelector("#identifierId, input[type='email'], input[name='identifier']");
   if (emailInput) {
-    setEmailValue(emailInput, targetEmail);
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    if (setter) setter.call(emailInput, targetEmail); else emailInput.value = targetEmail;
+    emailInput.dispatchEvent(new Event("input", { bubbles: true }));
+    emailInput.dispatchEvent(new Event("change", { bubbles: true }));
     const next = document.querySelector("#identifierNext button, #identifierNext, button[type='submit']");
-    if (clickElement(next)) {
+    if (next) {
+      next.click();
       return { step: "EMAIL_SUBMITTED" };
     }
-  }
-
-  const useAnotherAccount = Array.from(document.querySelectorAll("a[href]")).find((link) =>
-    /\/signin\/(?:v\d+\/)?identifier|AddSession/i.test(link.getAttribute("href") || "")
-  );
-  if (useAnotherAccount && clickElement(useAnotherAccount)) {
-    return { step: "USE_ANOTHER_ACCOUNT_SELECTED" };
-  }
-  if (/\/challenge\//.test(path) && !document.querySelector("[role='progressbar']")) {
-    return { step: "USER_ACTION_REQUIRED" };
   }
   return { step: "WAITING_FOR_SUPPORTED_FORM" };
 }
 
-function inspectPendingBrowserAuthentication(targetEmail) {
-  const normalized = targetEmail.toLowerCase();
-  const selectedControls = Array.from(document.querySelectorAll(
-    "[role='link'][jsname='af8ijd'][aria-label]"
-  ));
-  const selectedLabel = selectedControls.length === 1
-    ? selectedControls[0].getAttribute("aria-label") || ""
-    : "";
-  const selectedEmailTokens = selectedLabel.match(/[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+/gi) || [];
-  const uniqueSelectedEmails = [...new Set(
-    selectedEmailTokens.map((candidate) => candidate.toLowerCase())
-  )];
-  const accountMatches = selectedControls.length === 1
-    && uniqueSelectedEmails.length === 1
-    && uniqueSelectedEmails[0] === normalized;
-  if (/\/challenge\/pwd(?:\/|$)/.test(location.pathname)) {
-    if (!accountMatches) {
-      return "TARGET_ACCOUNT_NOT_CONFIRMED";
-    }
-    const processing = Boolean(document.querySelector(
-      "[role='progressbar'],[aria-busy='true'],#passwordNext[aria-disabled='true'],#passwordNext button[disabled]"
-    ));
-    return processing ? "AUTH_PENDING" : "PASSWORD_CHALLENGE_REMAINS";
+function submitPassword(targetEmail, password) {
+  function exactAccountEvidence(email) {
+    const normalizedEmail = email.toLowerCase();
+    const values = Array.from(document.querySelectorAll(
+      "[data-profile-identifier],[data-email],[data-identifier],[role='link'][aria-label]"
+    )).flatMap((element) => [
+      element.getAttribute("data-profile-identifier"),
+      element.getAttribute("data-email"),
+      element.getAttribute("data-identifier"),
+      element.getAttribute("aria-label")
+    ]).filter(Boolean);
+    const pattern = /[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+/gi;
+    const emails = [...new Set(values.flatMap((value) => value.match(pattern) || [])
+      .map((value) => value.toLowerCase()))];
+    return emails.length === 1 && emails[0] === normalizedEmail;
   }
-  if (/\/challenge\//.test(location.pathname)
-      || document.querySelector("iframe[src*='recaptcha'], input[autocomplete='one-time-code'], input[type='tel']")) {
-    return "USER_ACTION_REQUIRED";
+  if (!/\/challenge\/pwd(?:\/|$)/.test(location.pathname)) {
+    return { step: "STALE_PASSWORD_DOCUMENT" };
   }
-  return "AUTH_PAGE_CHANGED";
+  if (document.querySelector("iframe[src*='recaptcha'], input[autocomplete='one-time-code'], input[type='tel']")) {
+    return { step: "USER_ACTION_REQUIRED" };
+  }
+  if (!exactAccountEvidence(targetEmail)) {
+    return { step: "TARGET_ACCOUNT_NOT_CONFIRMED" };
+  }
+  const input = document.querySelector("input[name='Passwd'], input[type='password']");
+  const next = document.querySelector("#passwordNext button, #passwordNext");
+  if (!input || !next || typeof password !== "string" || password.length === 0) {
+    return { step: "PASSWORD_FORM_UNAVAILABLE" };
+  }
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  if (setter) setter.call(input, password); else input.value = password;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+  next.click();
+  return { step: "PASSWORD_SUBMITTED" };
 }
 
-async function refreshPendingAuthentication(run) {
-  const initialSubmit = run.stage === "BROWSER_CREDENTIAL_SUBMIT_REQUESTED";
-  const pendingRecheck = run.stage === "AUTH_PENDING";
-  const readyAt = initialSubmit
-    ? run.authAttemptAt + BROWSER_AUTH_SETTLE_MS
-    : run.nextAuthCheckAt;
-  if ((!initialSubmit && !pendingRecheck)
-      || !Number.isFinite(readyAt)
-      || Date.now() < readyAt
-      || !Number.isInteger(run.tabId)
-      || !run.currentDocumentId) {
-    return run;
+async function fetchOneShotCredential(run) {
+  const payload = await chrome.runtime.sendNativeMessage(NATIVE_HOST, {
+    action: "getCredential",
+    requestId: run.requestId
+  });
+  if (payload?.ok !== true
+      || typeof payload.email !== "string"
+      || payload.email.toLowerCase() !== TARGET_EMAIL
+      || typeof payload.password !== "string"
+      || payload.password.length === 0) {
+    throw new Error(payload?.error || "Credential bridge returned an invalid target credential.");
   }
-  let outcome;
-  try {
-    const results = await chrome.scripting.executeScript({
-      target: { tabId: run.tabId, documentIds: [run.currentDocumentId] },
-      func: inspectPendingBrowserAuthentication,
-      args: [TARGET_EMAIL]
-    });
-    outcome = results?.[0]?.result;
-  } catch {
-    return run;
+  return payload;
+}
+
+async function closeFailedWindow(run) {
+  if (Number.isInteger(run.windowId)) {
+    await chrome.windows.remove(run.windowId).catch(() => {});
   }
-  return updateRun(run.requestId, (current) => {
-    if (current.closed || current.tabId !== run.tabId
-        || current.currentDocumentId !== run.currentDocumentId
-        || (current.stage !== "BROWSER_CREDENTIAL_SUBMIT_REQUESTED" && current.stage !== "AUTH_PENDING")) {
-      return false;
-    }
-    if (outcome === "TARGET_ACCOUNT_NOT_CONFIRMED") {
-      current.stage = "TARGET_ACCOUNT_NOT_CONFIRMED";
-      current.note = "The selected Google challenge could not be bound to the target account.";
-    } else if (outcome === "PASSWORD_CHALLENGE_REMAINS") {
-      current.stage = "USER_ACTION_REQUIRED";
-      current.note = "No browser-managed credential or silent SSO completed the Google password challenge.";
-    } else if (outcome === "USER_ACTION_REQUIRED") {
-      current.stage = "USER_ACTION_REQUIRED";
-      current.note = "Google requires MFA, CAPTCHA, device confirmation, or another interactive challenge.";
-    } else if (outcome === "AUTH_PENDING") {
-      current.authPendingChecks = (current.authPendingChecks || 0) + 1;
-      if (current.authPendingChecks <= AUTH_PENDING_RECHECK_LIMIT) {
-        current.stage = "AUTH_PENDING";
-        current.nextAuthCheckAt = Date.now() + AUTH_PENDING_RECHECK_MS;
-        current.note = "Google is still processing browser-managed authentication; no user action is requested yet.";
-      } else {
-        current.stage = "USER_ACTION_REQUIRED";
-        current.note = "No browser-managed credential or silent SSO completed authentication within the bounded observation window.";
+}
+
+async function failRun(run, stage, note) {
+  updateRun(run, { stage, note, identityCheckComplete: true });
+  await closeFailedWindow(run);
+}
+
+async function automateGoogle(run, tabId) {
+  const existing = automationLocks.get(tabId);
+  if (existing) return existing;
+  const operation = (async () => {
+    for (let attempt = 0; attempt < AUTOMATION_RETRY_LIMIT; attempt += 1) {
+      if (run.closed || run.tabId !== tabId) return;
+      let result;
+      try {
+        const results = await chrome.scripting.executeScript({
+          target: { tabId }, func: inspectGooglePage, args: [TARGET_EMAIL]
+        });
+        result = results?.[0]?.result;
+      } catch {
+        await delay(AUTOMATION_RETRY_MS);
+        continue;
       }
-    } else if (outcome === "AUTH_PAGE_CHANGED") {
-      current.stage = "AUTH_TRANSITION_OBSERVED";
-      current.note = "Google changed the authentication page without a new document; waiting for navigation reconciliation.";
-    }
-  });
-}
-
-async function getStatus(message) {
-  if (message.version !== PROTOCOL_VERSION || !isRequestId(message.requestId)) {
-    return { ok: false, error: "INVALID_REQUEST" };
-  }
-  let run = await getRun(message.requestId);
-  if (!run) {
-    return { ok: false, error: "RUN_NOT_FOUND" };
-  }
-  if (!run.closed && Number.isInteger(run.tabId)) {
-    const frame = await reconcileCurrentFrame(message.requestId, run.tabId).catch(() => null);
-    run = await getRun(message.requestId) || run;
-    let frameOrigin;
-    try {
-      frameOrigin = new URL(frame?.url).origin;
-    } catch {
-      frameOrigin = null;
-    }
-    const currentGoogleStepAutomated = run.automatedDocumentId === run.currentDocumentId
-      && run.automatedDocumentPath === run.observedPath;
-    if (frameOrigin === "https://accounts.google.com"
-        && run.currentDocumentId
-        && !currentGoogleStepAutomated
-        && !PENDING_BROWSER_AUTH_STAGES.has(run.stage)) {
-      await automateGoogleLogin(message.requestId, run.tabId);
-      run = await getRun(message.requestId) || run;
-    }
-  }
-  run = await refreshPendingAuthentication(run) || run;
-  return { ok: true, run: publicRun(run) };
-}
-
-async function automateGoogleDocument(requestId, tabId, documentId, documentPath, attempt = 0) {
-  const run = await getRun(requestId);
-  if (!run || run.closed || run.tabId !== tabId
-      || run.currentDocumentId !== documentId
-      || run.observedPath !== documentPath
-      || (run.automatedDocumentId === documentId && run.automatedDocumentPath === documentPath)
-      || (run.automatedDocumentId === documentId && PENDING_BROWSER_AUTH_STAGES.has(run.stage))) {
-    return;
-  }
-  if (attempt === 0 && /\/challenge\/pwd(?:\/|$)/.test(run.observedPath || "")) {
-    await new Promise((resolve) => setTimeout(resolve, PASSWORD_MANAGER_SETTLE_MS));
-    const current = await getRun(requestId);
-    if (!current || current.closed || current.tabId !== tabId
-        || current.currentDocumentId !== documentId
-        || current.observedPath !== documentPath) {
-      return;
-    }
-  }
-  let outcome;
-  try {
-    const results = await chrome.scripting.executeScript({
-      target: { tabId, documentIds: [documentId] },
-      func: performGoogleStep,
-      args: [TARGET_EMAIL, documentPath]
-    });
-    outcome = results?.[0]?.result?.step || "WAITING_FOR_SUPPORTED_FORM";
-  } catch {
-    await updateRun(requestId, (current) => {
-      if (current.tabId !== tabId || current.currentDocumentId !== documentId
-          || current.observedPath !== documentPath) {
-        return false;
+      const step = result?.step || "WAITING_FOR_SUPPORTED_FORM";
+      if (step === "WAITING_FOR_SUPPORTED_FORM") {
+        await delay(AUTOMATION_RETRY_MS);
+        continue;
       }
-      current.stage = "AUTOMATION_ERROR";
-      current.note = "The extension could not execute the approved non-secret Google page step.";
-      current.automatedDocumentId = documentId;
-      current.automatedDocumentPath = documentPath;
-    });
-    return;
-  }
-  if (outcome === "STALE_AUTOMATION_STEP") {
-    await reconcileCurrentFrame(requestId, tabId).catch(() => {});
-    return;
-  }
-  if (outcome === "WAITING_FOR_SUPPORTED_FORM" && attempt < AUTOMATION_RETRY_LIMIT) {
-    await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)));
-    return automateGoogleDocument(requestId, tabId, documentId, documentPath, attempt + 1);
-  }
-  const stage = outcome === "WAITING_FOR_SUPPORTED_FORM" ? "GOOGLE_PAGE_UNRECOGNIZED" : outcome;
-  await updateRun(requestId, (current) => {
-    if (current.tabId !== tabId || current.currentDocumentId !== documentId
-        || current.observedPath !== documentPath) {
-      return false;
+      if (step === "USER_ACTION_REQUIRED" || step === "TARGET_ACCOUNT_NOT_CONFIRMED") {
+        await failRun(run, step, step === "USER_ACTION_REQUIRED"
+          ? "Google requested MFA, CAPTCHA, device approval, or another interactive challenge."
+          : "The password page was not bound to the exact target account.");
+        return;
+      }
+      if (step !== "PASSWORD_REQUIRED") {
+        updateRun(run, { stage: step, note: null });
+        return;
+      }
+
+      updateRun(run, {
+        stage: "FETCHING_ONE_SHOT_CREDENTIAL",
+        note: "Requesting the target credential from the local one-shot bridge."
+      });
+      let credential;
+      try {
+        credential = await fetchOneShotCredential(run);
+        updateRun(run, { credentialDelivered: true });
+        const results = await chrome.scripting.executeScript({
+          target: { tabId }, func: submitPassword, args: [TARGET_EMAIL, credential.password]
+        });
+        const passwordStep = results?.[0]?.result?.step || "PASSWORD_FORM_UNAVAILABLE";
+        credential.password = "";
+        credential = null;
+        if (passwordStep === "PASSWORD_SUBMITTED") {
+          updateRun(run, {
+            stage: "PASSWORD_SUBMITTED",
+            note: "The one-shot credential was submitted and discarded from extension memory."
+          });
+          return;
+        }
+        await failRun(run, passwordStep, "The exact Google password form could not be submitted safely.");
+        return;
+      } catch (error) {
+        if (credential) credential.password = "";
+        credential = null;
+        await failRun(run, "CREDENTIAL_BRIDGE_FAILED",
+          error instanceof Error ? error.message : "The one-shot credential bridge failed.");
+        return;
+      }
     }
-    current.stage = stage;
-    current.automatedDocumentId = documentId;
-    current.automatedDocumentPath = documentPath;
-    current.authAttemptAt = stage === "BROWSER_CREDENTIAL_SUBMIT_REQUESTED" ? Date.now() : null;
-    current.authPendingChecks = 0;
-    current.nextAuthCheckAt = null;
-    if (stage === "BROWSER_CREDENTIAL_SUBMIT_REQUESTED") {
-      current.note = "The extension clicked Google's Next control without reading the credential field; the browser or IdP must supply authentication.";
-    } else if (stage === "USER_ACTION_REQUIRED") {
-      current.note = "Google requires MFA, CAPTCHA, device confirmation, or another interactive challenge.";
-    } else if (stage === "TARGET_ACCOUNT_NOT_CONFIRMED") {
-      current.note = "The current Google challenge is not visibly bound to the target account.";
-    } else {
-      current.note = null;
-    }
-  });
+    await failRun(run, "GOOGLE_PAGE_UNRECOGNIZED", "Google did not expose a supported login document in time.");
+  })();
+  automationLocks.set(tabId, operation);
+  try {
+    await operation;
+  } finally {
+    if (automationLocks.get(tabId) === operation) automationLocks.delete(tabId);
+  }
 }
 
-async function automateGoogleLogin(requestId, tabId) {
-  const run = await getRun(requestId);
-  const currentStepAutomated = run?.automatedDocumentId === run?.currentDocumentId
-    && run?.automatedDocumentPath === run?.observedPath;
-  if (!run || run.closed || run.tabId !== tabId || currentStepAutomated
-      || (run.automatedDocumentId === run.currentDocumentId && PENDING_BROWSER_AUTH_STAGES.has(run.stage))) {
-    return;
-  }
-  const documentId = run.currentDocumentId || null;
-  if (!documentId) {
-    await updateRun(requestId, (current) => {
-      current.stage = "AUTOMATION_ERROR";
-      current.note = "The exact Google document could not be identified.";
-      current.automatedDocumentId = null;
-      current.automatedDocumentPath = null;
+async function handleNavigation(details) {
+  if (details.frameId !== 0) return;
+  const requestId = tabToRequest.get(details.tabId);
+  const run = requestId ? getRun(requestId) : null;
+  if (!run || run.closed) return;
+  let url;
+  try { url = new URL(details.url); } catch { return; }
+  updateRun(run, { observedOrigin: url.origin });
+  if (url.origin === "https://accounts.google.com") {
+    updateRun(run, { stage: "GOOGLE_LOGIN_PAGE", note: null });
+    await automateGoogle(run, details.tabId);
+  } else if (url.origin === "https://gemini.google.com") {
+    updateRun(run, {
+      stage: "GEMINI_DOCUMENT_LOADING",
+      note: "Gemini loaded; waiting for exact account confirmation."
     });
-    return;
   }
-  const documentPath = run.observedPath || "/";
-  const operationKey = `${requestId}:${documentId}`;
-  const pending = automationOperations.get(operationKey);
-  if (pending) {
-    if (pending.documentPath === documentPath) {
-      return pending.promise;
-    }
-    await pending.promise.catch(() => {});
-    return automateGoogleLogin(requestId, tabId);
-  }
-  const operation = automateGoogleDocument(requestId, tabId, documentId, documentPath);
-  const trackedOperation = operation.finally(() => {
-    if (automationOperations.get(operationKey)?.promise === trackedOperation) {
-      automationOperations.delete(operationKey);
-    }
-  });
-  automationOperations.set(operationKey, { documentPath, promise: trackedOperation });
-  return trackedOperation;
 }
 
-chrome.storage.session.setAccessLevel?.({ accessLevel: "TRUSTED_CONTEXTS" }).catch(() => {});
+function injectPrompt(prompt) {
+  const candidate = document.querySelector("div[contenteditable='true'][role='textbox'], textarea[aria-label], textarea");
+  if (!candidate) return { ok: false, error: "PROMPT_BOX_NOT_FOUND" };
+  candidate.focus();
+  if (candidate instanceof HTMLTextAreaElement || candidate instanceof HTMLInputElement) {
+    const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(candidate), "value")?.set;
+    if (setter) setter.call(candidate, prompt); else candidate.value = prompt;
+    candidate.dispatchEvent(new Event("input", { bubbles: true }));
+  } else {
+    candidate.textContent = prompt;
+    candidate.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: prompt }));
+  }
+  const send = document.querySelector("button[aria-label*='Send' i], button[aria-label*='ส่ง' i], button[data-test-id*='send' i]");
+  if (!send || send.disabled) return { ok: false, error: "SEND_BUTTON_NOT_READY" };
+  send.click();
+  return { ok: true };
+}
+
+async function postPrompt(message) {
+  const run = getRun(message.requestId);
+  if (!run || run.stage !== "GEMINI_TARGET_ACCOUNT_CONFIRMED" || !run.targetAccountConfirmed) {
+    return { ok: false, error: "GEMINI_NOT_READY" };
+  }
+  let pocUid;
+  try {
+    pocUid = await verifyPocIdToken(message.pocIdToken);
+  } catch {
+    return { ok: false, error: "POC_AUTH_REQUIRED" };
+  }
+  if (run.pocUid !== pocUid) {
+    return { ok: false, error: "POC_AUTH_REQUIRED" };
+  }
+  if (typeof message.prompt !== "string" || message.prompt.length === 0 || message.prompt.length > 4000) {
+    return { ok: false, error: "INVALID_PROMPT" };
+  }
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: run.tabId }, func: injectPrompt, args: [message.prompt]
+  });
+  const result = results?.[0]?.result || { ok: false, error: "PROMPT_SUBMIT_FAILED" };
+  if (result.ok) updateRun(run, { stage: "PROMPT_SUBMITTED", note: "The prompt was posted to the confirmed Gemini session." });
+  return { ...result, run: publicRun(run) };
+}
 
 chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
   if (!isAllowedExternalSender(sender)) {
     sendResponse({ ok: false, error: "UNTRUSTED_SENDER" });
     return false;
   }
-  const operation = message?.type === "OPEN_GEMINI"
-    ? openGemini(message)
-    : message?.type === "GET_STATUS"
-      ? getStatus(message)
-      : message?.type === "PING"
-        ? pingExtension()
-        : Promise.resolve({ ok: false, error: "UNKNOWN_MESSAGE" });
-  operation.then(sendResponse).catch((error) => {
-    sendResponse({ ok: false, error: "INTERNAL_ERROR", detail: error instanceof Error ? error.message : "Unknown error" });
-  });
+  const task = message?.type === "PING" ? pingExtension()
+    : message?.type === "START_AGENT" ? startAgent(message)
+      : message?.type === "GET_STATUS" ? Promise.resolve({ ok: true, run: publicRun(getRun(message.requestId)) })
+        : message?.type === "POST_PROMPT" ? postPrompt(message)
+          : Promise.resolve({ ok: false, error: "UNKNOWN_MESSAGE" });
+  task.then(sendResponse).catch((error) => sendResponse({
+    ok: false, error: error instanceof Error ? error.message : "EXTENSION_ERROR"
+  }));
   return true;
 });
 
-async function updateNavigation(details, completed) {
-  if (details.frameId !== 0) {
-    return;
-  }
-  const mapping = await chrome.storage.session.get(tabKey(details.tabId));
-  const requestId = mapping[tabKey(details.tabId)];
-  if (!requestId) {
-    return;
-  }
-  await updateRun(requestId, (run) => applyNavigation(run, details, completed, !completed));
-  let origin;
-  try {
-    origin = new URL(details.url).origin;
-  } catch {
-    return;
-  }
-  if (completed && origin === "https://accounts.google.com") {
-    await automateGoogleLogin(requestId, details.tabId);
-  }
-}
-
+chrome.webNavigation.onCompleted.addListener((details) => { handleNavigation(details).catch(() => {}); });
 chrome.webNavigation.onCommitted.addListener((details) => {
-  updateNavigation(details, false).catch(() => {});
-});
-
-chrome.webNavigation.onCompleted.addListener((details) => {
-  updateNavigation(details, true).catch(() => {});
-});
-
-chrome.webNavigation.onErrorOccurred.addListener((details) => {
-  if (details.frameId !== 0) {
-    return;
-  }
-  (async () => {
-    const mapping = await chrome.storage.session.get(tabKey(details.tabId));
-    const requestId = mapping[tabKey(details.tabId)];
-    if (!requestId) {
-      return;
-    }
-    const navigationAt = Number.isFinite(details.timeStamp) ? details.timeStamp : Date.now();
-    await updateRun(requestId, (run) => {
-      if (run.closed || navigationAt < (run.lastNavigationAt || 0)) {
-        return false;
-      }
-      run.lastNavigationAt = navigationAt;
-      run.stage = "NAVIGATION_ERROR";
-      run.note = details.error || "Navigation failed";
-    });
-  })().catch(() => {});
+  if (details.frameId !== 0) return;
+  const requestId = tabToRequest.get(details.tabId);
+  const run = requestId ? getRun(requestId) : null;
+  if (!run || run.closed) return;
+  try { updateRun(run, { observedOrigin: new URL(details.url).origin }); } catch { /* ignored */ }
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -659,79 +470,37 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       || sender.tab.incognito !== true) {
     return false;
   }
-  (async () => {
-    let senderOrigin;
-    try {
-      senderOrigin = new URL(sender.url).origin;
-    } catch {
-      sendResponse({ ok: false });
-      return;
-    }
-    if (senderOrigin !== "https://gemini.google.com") {
-      sendResponse({ ok: false });
-      return;
-    }
-    const mapping = await chrome.storage.session.get(tabKey(sender.tab.id));
-    const requestId = mapping[tabKey(sender.tab.id)];
-    if (!requestId) {
-      sendResponse({ ok: false });
-      return;
-    }
-    const frame = await chrome.webNavigation.getFrame({ tabId: sender.tab.id, frameId: 0 });
-    let frameOrigin;
-    try {
-      frameOrigin = new URL(frame?.url).origin;
-    } catch {
-      sendResponse({ ok: false });
-      return;
-    }
-    if (frameOrigin !== "https://gemini.google.com"
-        || !sender.documentId || !frame.documentId || sender.documentId !== frame.documentId) {
-      sendResponse({ ok: false });
-      return;
-    }
-    const run = await updateRun(requestId, (current) => {
-      if (current.closed || current.tabId !== sender.tab.id || current.currentDocumentId !== frame.documentId) {
-        return false;
-      }
-      if (current.targetAccountConfirmed && !message.targetAccountObserved) {
-        return false;
-      }
-      current.observedOrigin = "https://gemini.google.com";
-      current.documentObserved = true;
-      current.targetAccountConfirmed = message.targetAccountObserved;
-      current.identityCheckComplete = message.targetAccountObserved || message.identityCheckComplete;
-      current.stage = message.targetAccountObserved
-        ? "GEMINI_TARGET_ACCOUNT_CONFIRMED"
-        : message.identityCheckComplete
-          ? "GEMINI_TARGET_ACCOUNT_NOT_CONFIRMED"
-          : "GEMINI_DOCUMENT_OBSERVED";
-      current.note = message.targetAccountObserved
-        ? "Gemini exposed the exact target account in its rendered account controls."
-        : message.identityCheckComplete
-          ? "Gemini loaded, but the exact target account was not visible in the inspected account controls."
-          : "Gemini loaded; target-account observation is still in progress.";
+  const requestId = tabToRequest.get(sender.tab.id);
+  const run = requestId ? getRun(requestId) : null;
+  if (!run || run.closed) {
+    sendResponse({ ok: false });
+    return false;
+  }
+  let origin;
+  try { origin = new URL(sender.url).origin; } catch { sendResponse({ ok: false }); return false; }
+  if (origin !== "https://gemini.google.com") {
+    sendResponse({ ok: false });
+    return false;
+  }
+  if (message.targetAccountObserved) {
+    updateRun(run, {
+      stage: "GEMINI_TARGET_ACCOUNT_CONFIRMED",
+      targetAccountConfirmed: true,
+      identityCheckComplete: true,
+      note: "Gemini rendered the exact target account."
     });
-    sendResponse({
-      ok: Boolean(run && !run.closed),
-      confirmed: run?.targetAccountConfirmed === true,
-      complete: run?.identityCheckComplete === true
-    });
-  })().catch(() => sendResponse({ ok: false }));
-  return true;
+    chrome.windows.update(run.windowId, { state: "normal", focused: true }).catch(() => {});
+  } else if (message.identityCheckComplete && !run.targetAccountConfirmed) {
+    failRun(run, "GEMINI_TARGET_ACCOUNT_NOT_CONFIRMED", "Gemini loaded with an unconfirmed account.").catch(() => {});
+  }
+  sendResponse({ ok: true, confirmed: run.targetAccountConfirmed, complete: run.identityCheckComplete });
+  return false;
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  (async () => {
-    const mapping = await chrome.storage.session.get(tabKey(tabId));
-    const requestId = mapping[tabKey(tabId)];
-    if (!requestId) {
-      return;
-    }
-    await updateRun(requestId, (run) => {
-      run.closed = true;
-      run.stage = "TAB_CLOSED";
-    });
-    await chrome.storage.session.remove(tabKey(tabId));
-  })().catch(() => {});
+  const requestId = tabToRequest.get(tabId);
+  if (!requestId) return;
+  const run = getRun(requestId);
+  if (run) updateRun(run, { closed: true, stage: "TAB_CLOSED" });
+  tabToRequest.delete(tabId);
 });

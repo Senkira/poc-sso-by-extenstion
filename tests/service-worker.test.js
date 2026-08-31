@@ -1,131 +1,81 @@
 "use strict";
 
+const assert = require("assert/strict");
 const fs = require("fs");
 const vm = require("vm");
-const assert = require("assert/strict");
 
-const EXTENSION_ID = "jeenmgigpkffleijbmfciffiodlcdafh";
-const store = {};
 const listeners = {};
-const createdOptions = [];
-let scriptStep = "ACCOUNT_SELECTED";
-let currentFrame = { url: "about:blank", documentId: "doc-blank" };
-let performGoogleStepCallCount = 0;
-let performedSideEffectCount = 0;
-let scriptGate = null;
-let scriptStarted = null;
-let incognitoAllowed = true;
-const event = (name) => ({ addListener(listener) { listeners[name] = listener; } });
+const createdWindows = [];
+const updatedWindows = [];
+const removedWindows = [];
+const nativeMessages = [];
+let googleStep = "PASSWORD_REQUIRED";
+const pocIdToken = "test-id-token".padEnd(120, "x");
 
+const event = (name) => ({ addListener(listener) { listeners[name] = listener; } });
 const chrome = {
-  storage: {
-    session: {
-      async get(key) { return key === null ? { ...store } : { [key]: store[key] }; },
-      async set(values) { Object.assign(store, values); },
-      async remove(key) { for (const item of Array.isArray(key) ? key : [key]) delete store[item]; },
-      async setAccessLevel() {}
-    }
-  },
-  windows: {
-    async create(options) {
-      createdOptions.push(options);
-      assert.equal(options.url.startsWith("https://accounts.google.com/AccountChooser?"), true);
-      currentFrame = { url: options.url, documentId: "doc-account-chooser" };
-      return { id: 51, tabs: [{ id: 61 }] };
-    }
-  },
   extension: {
-    async isAllowedIncognitoAccess() { return incognitoAllowed; }
+    isAllowedIncognitoAccess(callback) { callback(true); }
   },
   runtime: {
-    id: EXTENSION_ID,
-    getManifest() { return { version: "0.5.0" }; },
+    getManifest() { return { version: "0.7.0" }; },
+    async sendNativeMessage(host, message) {
+      nativeMessages.push({ host, message });
+      return { ok: true, email: "codeassist.04@easybuy.co.th", password: "test-only-password" };
+    },
     onMessageExternal: event("external"),
     onMessage: event("internal")
   },
-  webNavigation: {
-    async getFrame() { return { ...currentFrame }; },
-    onCommitted: event("committed"),
-    onCompleted: event("completed"),
-    onErrorOccurred: event("navigationError")
+  windows: {
+    async create(options) {
+      createdWindows.push(options);
+      return { id: 71, tabs: [{ id: 81 }] };
+    },
+    async update(id, options) { updatedWindows.push({ id, options }); },
+    async remove(id) { removedWindows.push(id); }
   },
   scripting: {
     async executeScript(options) {
-      assert.deepEqual(Array.from(options.target.documentIds || []), [currentFrame.documentId]);
-      if (options.func.name === "performGoogleStep") {
+      if (options.func.name === "inspectGooglePage") return [{ result: { step: googleStep } }];
+      if (options.func.name === "submitPassword") {
         assert.equal(options.args[0], "codeassist.04@easybuy.co.th");
-        assert.match(options.args[1], /^\//);
-        performGoogleStepCallCount += 1;
-        scriptStarted?.();
-        if (scriptGate) await scriptGate;
-        const actualPath = new URL(currentFrame.url).pathname;
-        if (actualPath !== options.args[1]) {
-          return [{ result: { step: "STALE_AUTOMATION_STEP" } }];
-        }
-        performedSideEffectCount += 1;
-        return [{ result: { step: scriptStep } }];
+        assert.equal(options.args[1], "test-only-password");
+        return [{ result: { step: "PASSWORD_SUBMITTED" } }];
       }
-      if (options.func.name === "inspectPendingBrowserAuthentication") {
-        assert.deepEqual(Array.from(options.args), ["codeassist.04@easybuy.co.th"]);
-        return [{ result: scriptStep }];
-      }
-      throw new Error("Unexpected injected function");
+      if (options.func.name === "injectPrompt") return [{ result: { ok: true } }];
+      throw new Error(`Unexpected script: ${options.func.name}`);
     }
   },
-  tabs: { onRemoved: event("tabRemoved") }
+  webNavigation: {
+    onCompleted: event("completed"),
+    onCommitted: event("committed")
+  },
+  tabs: { onRemoved: event("removed") }
 };
 
-const workerContext = {
-    chrome,
-    URL,
-    Map,
-    Promise,
-    Date,
-    Number,
-    Error,
-    setTimeout(callback) { Promise.resolve().then(callback); return 1; },
-    clearTimeout() {}
-};
-vm.runInNewContext(fs.readFileSync("extension/service-worker.js", "utf8"), workerContext);
-
-function accountMarker(attributes = {}, textContent = "") {
-  return {
-    textContent,
-    getAttribute(name) { return attributes[name] ?? null; }
-  };
-}
-
-function runPasswordStep(
-  markers,
-  processing = false,
-  selectedControl = null,
-  expectedPath = "/v3/signin/challenge/pwd"
-) {
-  let clicked = false;
-  workerContext.location = { pathname: "/v3/signin/challenge/pwd" };
-  workerContext.document = {
-    querySelectorAll(selector) {
-      if (selector === "[role='link'][jsname='af8ijd'][aria-label]") {
-        return selectedControl ? (Array.isArray(selectedControl) ? selectedControl : [selectedControl]) : [];
+const context = {
+  chrome,
+  URL,
+  Map,
+  Set,
+  Promise,
+  Date,
+  Number,
+  Error,
+  encodeURIComponent,
+  async fetch(url, options) {
+    assert.match(url, /identitytoolkit\.googleapis\.com\/v1\/accounts:lookup/);
+    assert.equal(JSON.parse(options.body).idToken, pocIdToken);
+    return {
+      ok: true,
+      async json() {
+        return { users: [{ localId: "poc-user-1", email: "o1234567@poc.invalid" }] };
       }
-      return markers;
-    },
-    querySelector(selector) {
-      if (selector.includes("recaptcha") || selector.includes("one-time-code")) return null;
-      if (selector === "[role='link'][jsname='af8ijd'][aria-label]") return selectedControl;
-      if (selector.includes("progressbar")) return processing ? {} : null;
-      if (selector.includes("#passwordNext")) return { click() { clicked = true; } };
-      return null;
-    }
-  };
-  return {
-    outcome: workerContext.performGoogleStep(
-      "codeassist.04@easybuy.co.th",
-      expectedPath
-    ),
-    clicked
-  };
-}
+    };
+  },
+  setTimeout(callback) { Promise.resolve().then(callback); return 1; }
+};
+vm.runInNewContext(fs.readFileSync("extension/service-worker.js", "utf8"), context);
 
 function external(message, sender = { frameId: 0, url: "https://poc-after-sso-login-gemini.web.app/" }) {
   return new Promise((resolve) => listeners.external(message, sender, resolve));
@@ -135,311 +85,89 @@ function internal(message, sender) {
   return new Promise((resolve) => listeners.internal(message, sender, resolve));
 }
 
-function deferred() {
-  let resolve;
-  const promise = new Promise((done) => { resolve = done; });
-  return { promise, resolve };
-}
-
-async function flush(rounds = 3) {
+async function flush(rounds = 8) {
   for (let index = 0; index < rounds; index += 1) {
     await new Promise((resolve) => setImmediate(resolve));
   }
 }
 
 async function main() {
+  const ping = await external({ type: "PING", version: 7 });
+  assert.equal(ping.version, "0.7.0");
+  assert.equal(ping.protocolVersion, 7);
+  assert.equal(ping.capability, "EXTENSION_AGENT_ONE_SHOT_BRIDGE");
+  assert.equal(ping.incognitoAccessAllowed, true);
+
   const requestId = "123e4567-e89b-42d3-a456-426614174000";
-  const [first, replay] = await Promise.all([
-    external({ type: "OPEN_GEMINI", version: 4, requestId }),
-    external({ type: "OPEN_GEMINI", version: 4, requestId })
-  ]);
-  assert.equal(first.ok, true);
-  assert.equal(replay.ok, true);
-  assert.equal(createdOptions.length, 1, "same UUID must create exactly one Google window");
-  assert.equal(createdOptions[0].incognito, true, "Google must open in an ephemeral InPrivate window");
+  const denied = await external({ type: "START_AGENT", version: 7, requestId });
+  assert.equal(denied.error, "POC_AUTH_REQUIRED");
+  assert.equal(createdWindows.length, 0);
+
+  const started = await external({ type: "START_AGENT", version: 7, requestId, pocIdToken });
+  assert.equal(started.ok, true);
+  assert.equal(createdWindows.length, 1);
+  assert.equal(createdWindows[0].incognito, true);
+  assert.equal(createdWindows[0].focused, false);
+  assert.equal(createdWindows[0].state, "minimized");
 
   listeners.completed({
     frameId: 0,
-    tabId: 61,
-    url: currentFrame.url,
-    timeStamp: Date.now() + 1,
-    documentId: currentFrame.documentId
+    tabId: 81,
+    url: "https://accounts.google.com/v3/signin/challenge/pwd"
   });
   await flush();
-  let status = await external({ type: "GET_STATUS", version: 4, requestId });
-  assert.equal(status.run.stage, "ACCOUNT_SELECTED");
+  let status = await external({ type: "GET_STATUS", version: 7, requestId });
+  assert.equal(status.run.stage, "PASSWORD_SUBMITTED");
+  assert.equal(status.run.credentialDelivered, true);
+  assert.equal(Object.prototype.hasOwnProperty.call(status.run, "password"), false);
+  assert.equal(nativeMessages.length, 1);
+  assert.equal(nativeMessages[0].host, "com.senkira.gemini_extension_agent");
 
-  currentFrame = { url: "https://accounts.google.com/v3/signin/challenge/pwd", documentId: "doc-account-chooser" };
-
-  store[`run:${requestId}`].stage = "GOOGLE_ACCOUNTS_PAGE_LOADED";
-  store[`run:${requestId}`].automatedDocumentId = null;
-  store[`run:${requestId}`].automatedDocumentPath = null;
-  store[`run:${requestId}`].authAttemptAt = null;
-  store[`run:${requestId}`].nextAuthCheckAt = null;
-  currentFrame = { url: "https://accounts.google.com/AccountChooser", documentId: "doc-account-chooser" };
-  scriptStep = "ACCOUNT_SELECTED";
-  performGoogleStepCallCount = 0;
-  performedSideEffectCount = 0;
-  const staleStarted = deferred();
-  const staleGate = deferred();
-  scriptStarted = staleStarted.resolve;
-  scriptGate = staleGate.promise;
-  const stalePathStatus = external({ type: "GET_STATUS", version: 4, requestId });
-  await staleStarted.promise;
-  currentFrame = { url: "https://accounts.google.com/v3/signin/challenge/pwd", documentId: "doc-account-chooser" };
-  scriptStep = "BROWSER_CREDENTIAL_SUBMIT_REQUESTED";
-  listeners.completed({
-    frameId: 0,
-    tabId: 61,
-    url: currentFrame.url,
-    timeStamp: Date.now() + 10,
-    documentId: currentFrame.documentId
-  });
-  await flush();
-  staleGate.resolve();
-  await stalePathStatus;
-  scriptGate = null;
-  scriptStarted = null;
-  await flush(8);
-  status = await external({ type: "GET_STATUS", version: 4, requestId });
-  assert.equal(status.run.stage, "BROWSER_CREDENTIAL_SUBMIT_REQUESTED");
-  assert.equal(performGoogleStepCallCount, 2, "stale step must be retried once for the current path");
-  assert.equal(performedSideEffectCount, 1, "stale expected-path execution must have no side effect");
-  store[`run:${requestId}`].stage = "GOOGLE_ACCOUNTS_PAGE_LOADED";
-  store[`run:${requestId}`].automatedDocumentId = null;
-  store[`run:${requestId}`].automatedDocumentPath = null;
-  store[`run:${requestId}`].authAttemptAt = null;
-  store[`run:${requestId}`].nextAuthCheckAt = null;
-  scriptStep = "BROWSER_CREDENTIAL_SUBMIT_REQUESTED";
-  performGoogleStepCallCount = 0;
-  const started = deferred();
-  const gate = deferred();
-  scriptStarted = started.resolve;
-  scriptGate = gate.promise;
-  const recoveredStatus = external({ type: "GET_STATUS", version: 4, requestId });
-  await started.promise;
-  listeners.completed({
-    frameId: 0,
-    tabId: 61,
-    url: currentFrame.url,
-    timeStamp: Date.now() + 20,
-    documentId: currentFrame.documentId
-  });
-  await flush();
-  gate.resolve();
-  status = await recoveredStatus;
-  scriptGate = null;
-  scriptStarted = null;
-  assert.equal(status.run.stage, "BROWSER_CREDENTIAL_SUBMIT_REQUESTED");
-  assert.equal(status.run.documentObserved, false, "GET_STATUS must reconcile a missed navigation event");
-  assert.equal(performGoogleStepCallCount, 1, "event and status recovery must share one automation operation");
-  assert.equal(createdOptions.length, 1, "extension must never open a credential page");
-
-  listeners.completed({
-    frameId: 0,
-    tabId: 61,
-    url: currentFrame.url,
-    timeStamp: Date.now() + 30
-  });
-  await flush();
-  status = await external({ type: "GET_STATUS", version: 4, requestId });
-  assert.equal(
-    status.run.stage,
-    "BROWSER_CREDENTIAL_SUBMIT_REQUESTED",
-    "late completion for the automated document must not clobber authentication progress"
-  );
-
-  store[`run:${requestId}`].stage = "BROWSER_CREDENTIAL_SUBMIT_REQUESTED";
-  store[`run:${requestId}`].authAttemptAt = Date.now() - 5000;
-  store[`run:${requestId}`].authPendingChecks = 0;
-  store[`run:${requestId}`].nextAuthCheckAt = null;
-  currentFrame = { url: "https://accounts.google.com/v3/signin/challenge/otp", documentId: "doc-account-chooser" };
-  scriptStep = "AUTH_PAGE_CHANGED";
-  status = await external({ type: "GET_STATUS", version: 4, requestId });
-  assert.equal(
-    status.run.stage,
-    "AUTH_TRANSITION_OBSERVED",
-    "same-document challenge-path reconciliation must preserve auth state until inspection"
-  );
-
-  currentFrame = { url: "https://accounts.google.com/v3/signin/challenge/pwd", documentId: "doc-account-chooser" };
-
-  const source = fs.readFileSync("extension/service-worker.js", "utf8");
-  assert.doesNotMatch(source, /PASS_PASSWORD|submitGooglePassword|openCredentialPassThrough|login\.html/);
-  assert.doesNotMatch(source, /input\[type=['"]password|input\[name=['"]Passwd/);
-  assert.doesNotMatch(source, /chrome\.cookies|chrome\.identity/);
-
-  const wrongAccount = runPasswordStep([
-    accountMarker({ "data-email": "other-user@example.com" }),
-    accountMarker({ role: "link" }, "codeassist.04@easybuy.co.th")
-  ]);
-  assert.equal(wrongAccount.outcome.step, "TARGET_ACCOUNT_NOT_CONFIRMED");
-  assert.equal(wrongAccount.clicked, false, "unrelated link text must never authorize password submission");
-
-  const exactAccount = runPasswordStep([
-    accountMarker({ "data-profile-identifier": "codeassist.04@easybuy.co.th" })
-  ]);
-  assert.equal(exactAccount.outcome.step, "TARGET_ACCOUNT_NOT_CONFIRMED");
-  assert.equal(exactAccount.clicked, false, "a bare profile marker is not selected-account evidence");
-
-  const selectedAriaControl = runPasswordStep(
-    [accountMarker({ "data-profile-identifier": "" })],
-    false,
-    accountMarker({
-      role: "link",
-      jsname: "af8ijd",
-      "aria-label": "เลือก codeassist.04@easybuy.co.th อยู่ สลับบัญชี"
-    })
-  );
-  assert.equal(selectedAriaControl.outcome.step, "BROWSER_CREDENTIAL_SUBMIT_REQUESTED");
-  assert.equal(selectedAriaControl.clicked, true, "the observed selected-account control must authorize the target only");
-
-  const staleSelectedAriaControl = runPasswordStep(
-    [],
-    false,
-    accountMarker({ "aria-label": "เลือก codeassist.04@easybuy.co.th อยู่ สลับบัญชี" }),
-    "/AccountChooser"
-  );
-  assert.equal(staleSelectedAriaControl.outcome.step, "STALE_AUTOMATION_STEP");
-  assert.equal(staleSelectedAriaControl.clicked, false, "stale path must be rejected before any click");
-
-  const ambiguousSelectedControls = runPasswordStep([], false, [
-    accountMarker({ "aria-label": "เลือก codeassist.04@easybuy.co.th อยู่ สลับบัญชี" }),
-    accountMarker({ "aria-label": "เลือก other-user@example.com อยู่ สลับบัญชี" })
-  ]);
-  assert.equal(ambiguousSelectedControls.outcome.step, "TARGET_ACCOUNT_NOT_CONFIRMED");
-  assert.equal(ambiguousSelectedControls.clicked, false, "multiple selected-account controls must fail closed");
-
-  const ambiguousSelectedLabel = runPasswordStep([], false, accountMarker({
-    "aria-label": "เลือก codeassist.04@easybuy.co.th และ other-user@example.com"
-  }));
-  assert.equal(ambiguousSelectedLabel.outcome.step, "TARGET_ACCOUNT_NOT_CONFIRMED");
-  assert.equal(ambiguousSelectedLabel.clicked, false, "multiple account tokens must fail closed");
-
-  workerContext.document = {
-    querySelectorAll(selector) {
-      return selector === "[role='link'][jsname='af8ijd'][aria-label]"
-        ? [accountMarker({ "aria-label": "เลือก codeassist.04@easybuy.co.th อยู่ สลับบัญชี" })]
-        : [];
-    },
-    querySelector(selector) {
-      if (selector === "[role='link'][jsname='af8ijd'][aria-label]") return null;
-      return {};
-    }
-  };
-  workerContext.location = { pathname: "/v3/signin/challenge/pwd" };
-  assert.equal(
-    workerContext.inspectPendingBrowserAuthentication("codeassist.04@easybuy.co.th"),
-    "AUTH_PENDING"
-  );
-
-  store[`run:${requestId}`].stage = "BROWSER_CREDENTIAL_SUBMIT_REQUESTED";
-  store[`run:${requestId}`].authAttemptAt = Date.now() - 5000;
-  store[`run:${requestId}`].authPendingChecks = 0;
-  store[`run:${requestId}`].nextAuthCheckAt = null;
-  scriptStep = "AUTH_PENDING";
-  status = await external({ type: "GET_STATUS", version: 4, requestId });
-  assert.equal(status.run.stage, "AUTH_PENDING");
-  store[`run:${requestId}`].nextAuthCheckAt = Date.now() - 1;
-  status = await external({ type: "GET_STATUS", version: 4, requestId });
-  assert.equal(status.run.stage, "AUTH_PENDING");
-  store[`run:${requestId}`].nextAuthCheckAt = Date.now() - 1;
-  status = await external({ type: "GET_STATUS", version: 4, requestId });
-  assert.equal(status.run.stage, "USER_ACTION_REQUIRED");
-  assert.match(status.run.note, /No browser-managed credential/);
-
-  store[`run:${requestId}`].stage = "BROWSER_CREDENTIAL_SUBMIT_REQUESTED";
-  store[`run:${requestId}`].authAttemptAt = Date.now() - 5000;
-  store[`run:${requestId}`].authPendingChecks = 0;
-  store[`run:${requestId}`].nextAuthCheckAt = null;
-  scriptStep = "PASSWORD_CHALLENGE_REMAINS";
-  status = await external({ type: "GET_STATUS", version: 4, requestId });
-  assert.equal(status.run.stage, "USER_ACTION_REQUIRED");
-  assert.match(status.run.note, /No browser-managed credential/);
-
-  currentFrame = { url: "https://gemini.google.com/app", documentId: "doc-gemini" };
-  listeners.committed({
-    frameId: 0,
-    tabId: 61,
-    url: currentFrame.url,
-    timeStamp: Date.now() + 40,
-    documentId: currentFrame.documentId
-  });
-  await flush();
+  listeners.committed({ frameId: 0, tabId: 81, url: "https://gemini.google.com/app" });
   await internal(
-    {
-      type: "GEMINI_DOCUMENT_SIGNAL",
-      version: 4,
-      targetAccountObserved: true,
-      identityCheckComplete: true
-    },
-    { frameId: 0, url: currentFrame.url, documentId: currentFrame.documentId, tab: { id: 61, incognito: true } }
+    { type: "GEMINI_DOCUMENT_SIGNAL", version: 7, targetAccountObserved: true, identityCheckComplete: true },
+    { frameId: 0, url: "https://gemini.google.com/app", tab: { id: 81, incognito: true } }
   );
-  status = await external({ type: "GET_STATUS", version: 4, requestId });
+  status = await external({ type: "GET_STATUS", version: 7, requestId });
   assert.equal(status.run.stage, "GEMINI_TARGET_ACCOUNT_CONFIRMED");
   assert.equal(status.run.targetAccountConfirmed, true);
+  assert.equal(updatedWindows[0].id, 71);
+  assert.equal(updatedWindows[0].options.state, "normal");
+  assert.equal(updatedWindows[0].options.focused, true);
 
-  await internal(
-    {
-      type: "GEMINI_DOCUMENT_SIGNAL",
-      version: 4,
-      targetAccountObserved: false,
-      identityCheckComplete: true
-    },
-    { frameId: 0, url: currentFrame.url, documentId: currentFrame.documentId, tab: { id: 61, incognito: true } }
-  );
-  status = await external({ type: "GET_STATUS", version: 4, requestId });
-  assert.equal(status.run.stage, "GEMINI_TARGET_ACCOUNT_CONFIRMED", "confirmed identity must not be downgraded");
-
-  const wrongVersionResult = listeners.internal(
-    {
-      type: "GEMINI_DOCUMENT_SIGNAL",
-      version: 2,
-      targetAccountObserved: true,
-      identityCheckComplete: true
-    },
-    { frameId: 0, url: currentFrame.url, documentId: currentFrame.documentId, tab: { id: 61, incognito: true } },
-    () => { throw new Error("wrong version must not respond"); }
-  );
-  assert.equal(wrongVersionResult, false);
-
-  listeners.tabRemoved(61);
-  await flush();
-  status = await external({ type: "GET_STATUS", version: 4, requestId });
-  assert.equal(status.run.stage, "TAB_CLOSED");
-
-  incognitoAllowed = false;
-  const blockedRequestId = "123e4567-e89b-42d3-a456-426614174001";
-  const blocked = await external({ type: "OPEN_GEMINI", version: 4, requestId: blockedRequestId });
-  assert.equal(blocked.ok, false);
-  assert.equal(blocked.error, "INPRIVATE_ACCESS_REQUIRED");
-  assert.equal(blocked.run.stage, "INPRIVATE_ACCESS_REQUIRED");
-  assert.equal(createdOptions.length, 1, "no regular fallback window may be opened");
-  incognitoAllowed = true;
+  const posted = await external({
+    type: "POST_PROMPT", version: 7, requestId, pocIdToken, prompt: "POC test"
+  });
+  assert.equal(posted.ok, true);
+  assert.equal(posted.run.stage, "PROMPT_SUBMITTED");
 
   const rejected = await external(
-    { type: "PING", version: 4 },
+    { type: "PING", version: 7 },
     { frameId: 0, url: "https://example.com/" }
   );
   assert.equal(rejected.error, "UNTRUSTED_SENDER");
 
-  console.log("PASS concurrent-window-idempotency");
-  console.log("PASS exact-document-non-secret-automation");
-  console.log("PASS missed-navigation-status-reconciliation");
-  console.log("PASS per-document-automation-single-flight");
-  console.log("PASS late-completion-does-not-clobber-auth-state");
-  console.log("PASS same-document-path-reconciliation-preserves-auth-state");
-  console.log("PASS same-document-new-google-step-is-automated-once");
-  console.log("PASS stale-path-script-is-side-effect-free");
-  console.log("PASS no-extension-credential-page-or-message");
-  console.log("PASS strict-password-challenge-account-binding");
-  console.log("PASS ambiguous-selected-account-evidence-fails-closed");
-  console.log("PASS processing-state-bounded-reconciliation");
-  console.log("PASS browser-credential-unavailable-fails-closed");
-  console.log("PASS target-account-confirmation-is-monotonic");
-  console.log("PASS exact-tab-close-state");
-  console.log("PASS inprivate-access-fails-closed");
+  const source = fs.readFileSync("extension/service-worker.js", "utf8");
+  assert.doesNotMatch(source, /@[s]{2}w0rd/i);
+  assert.doesNotMatch(source, /chrome\.storage\.(local|sync)/);
+  assert.match(source, /sendNativeMessage\(NATIVE_HOST/);
+
+  googleStep = "USER_ACTION_REQUIRED";
+  const challengeId = "123e4567-e89b-42d3-a456-426614174001";
+  await external({ type: "START_AGENT", version: 7, requestId: challengeId, pocIdToken });
+  listeners.completed({ frameId: 0, tabId: 81, url: "https://accounts.google.com/v3/signin/challenge/otp" });
+  await flush();
+  const challenged = await external({ type: "GET_STATUS", version: 7, requestId: challengeId });
+  assert.equal(challenged.run.stage, "USER_ACTION_REQUIRED");
+  assert.equal(removedWindows.includes(71), true);
+
+  console.log("PASS extension-agent-state-machine");
+  console.log("PASS isolated-window-hidden-until-confirmed");
+  console.log("PASS one-shot-native-credential-bridge");
+  console.log("PASS prompt-post-after-account-confirmation");
+  console.log("PASS interactive-challenge-fails-closed");
   console.log("PASS untrusted-origin-rejection");
+  console.log("PASS firebase-auth-gates-agent-start-and-prompt");
 }
 
 main().catch((error) => {

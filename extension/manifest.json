@@ -1,19 +1,21 @@
 {
   "manifest_version": 3,
-  "name": "Gemini Secretless Launcher POC",
-  "version": "0.5.0",
-  "description": "Launches Gemini in an ephemeral InPrivate window while Edge or Chrome supplies any saved credential.",
+  "name": "Gemini Extension Agent POC",
+  "version": "0.7.0",
+  "description": "Runs the Google-to-Gemini browser agent inside an isolated InPrivate window using a one-shot local credential bridge.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5mFUe6j809Za28DcfeQSWag0BkYPMQ/5Ked6gl1t15QvA9aNb9dQwFxU6KAYLeg+mZDcWhphZqefYpsPnsUXQXK1ioWeKQRZuMal+cGDAPj7WGQU1lfEq7k/Nc2U8MLJCu339On9XpZ6zoauPj0kvIugSnnpuEr83wyzgAVYMlPZtngVu4RkijoWS57Kh08yOvSfFa6X2Lh+0PD1NW7fsSzM57x5z3xyhP3VGCXe2rc1KRytb5fVqqq8DadtFy9nwkIoPThbzUr+BnfN9F2e6aA/+1kX86yMjPoIOHeIImBQKqhTyMDa5etc3wSwWizWZZeUOUdBrjRIs2mhnLO7yQIDAQAB",
   "permissions": [
-    "storage",
     "tabs",
     "webNavigation",
-    "scripting"
+    "scripting",
+    "nativeMessaging"
   ],
   "host_permissions": [
     "https://gemini.google.com/*",
-    "https://accounts.google.com/*"
+    "https://accounts.google.com/*",
+    "https://identitytoolkit.googleapis.com/*"
   ],
+  "incognito": "spanning",
   "background": {
     "service_worker": "service-worker.js"
   },
@@ -32,6 +34,5 @@
     "matches": [
       "https://poc-after-sso-login-gemini.web.app/*"
     ]
-  },
-  "incognito": "spanning"
+  }
 }
