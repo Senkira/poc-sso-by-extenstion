@@ -75,6 +75,7 @@ function publicRun(run) {
     targetAccountConfirmed: run.targetAccountConfirmed === true,
     identityCheckComplete: run.identityCheckComplete === true,
     credentialDelivered: run.credentialDelivered === true,
+    credentialSubmitted: run.credentialSubmitted === true,
     credentialState: typeof run.credentialState === "string" ? run.credentialState : "NOT_REQUESTED",
     closed: run.closed === true,
     note: run.note || null
@@ -128,6 +129,7 @@ async function hydrateState() {
       targetAccountConfirmed: saved.targetAccountConfirmed === true,
       identityCheckComplete: saved.identityCheckComplete === true,
       credentialDelivered: saved.credentialDelivered === true,
+      credentialSubmitted: saved.credentialSubmitted === true,
       credentialState: ["NOT_REQUESTED", "REQUESTING", "CONSUMED"].includes(saved.credentialState)
         ? saved.credentialState
         : saved.credentialDelivered === true ? "CONSUMED" : "NOT_REQUESTED",
@@ -351,6 +353,7 @@ async function startAgentUnlocked(message) {
     targetAccountConfirmed: false,
     identityCheckComplete: false,
     credentialDelivered: false,
+    credentialSubmitted: false,
     credentialState: "NOT_REQUESTED",
     pocUid,
     brokerIdToken: message.pocIdToken,
@@ -485,7 +488,7 @@ function inspectGooglePage(targetEmail) {
   return { step: "WAITING_FOR_SUPPORTED_FORM" };
 }
 
-function submitPassword(targetEmail, password, expectedPath) {
+async function submitPassword(targetEmail, password, expectedPath) {
   function exactSelectedAccount(email) {
     const normalizedEmail = email.toLowerCase();
     const controls = Array.from(document.querySelectorAll(
@@ -512,16 +515,50 @@ function submitPassword(targetEmail, password, expectedPath) {
     return { step: "TARGET_ACCOUNT_NOT_CONFIRMED" };
   }
   const input = document.querySelector("input[name='Passwd'], input[type='password']");
-  const next = document.querySelector("#passwordNext button, #passwordNext");
-  if (!input || !next || typeof password !== "string" || password.length === 0) {
+  if (!input || typeof password !== "string" || password.length === 0) {
     return { step: "PASSWORD_FORM_UNAVAILABLE" };
   }
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-  if (setter) setter.call(input, password); else input.value = password;
-  input.dispatchEvent(new Event("input", { bubbles: true }));
-  input.dispatchEvent(new Event("change", { bubbles: true }));
-  next.click();
-  return { step: "PASSWORD_SUBMITTED" };
+  const applyPassword = () => {
+    input.focus();
+    if (setter) setter.call(input, password); else input.value = password;
+    try {
+      input.dispatchEvent(new InputEvent("beforeinput", {
+        bubbles: true,
+        cancelable: true,
+        data: password,
+        inputType: "insertText"
+      }));
+      input.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        data: password,
+        inputType: "insertText"
+      }));
+    } catch {
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+
+  applyPassword();
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    if (location.pathname !== expectedPath || !exactSelectedAccount(targetEmail)) {
+      return { step: "STALE_PASSWORD_DOCUMENT" };
+    }
+    if (input.value !== password) {
+      applyPassword();
+      continue;
+    }
+    const next = document.querySelector("#passwordNext button, #passwordNext");
+    const disabled = !next
+      || next.disabled === true
+      || next.getAttribute?.("aria-disabled") === "true";
+    if (disabled) continue;
+    next.click();
+    return { step: "PASSWORD_SUBMITTED" };
+  }
+  return { step: "PASSWORD_FORM_UNAVAILABLE" };
 }
 
 function clearPasswordInput() {
@@ -677,7 +714,13 @@ async function automateGoogle(run, tabId, documentId) {
       let credential;
       try {
         credential = await fetchOneShotCredential(run);
-        updateRun(run, { credentialDelivered: true, credentialState: "CONSUMED" });
+        updateRun(run, {
+          stage: "INJECTING_PASSWORD",
+          credentialDelivered: true,
+          credentialSubmitted: false,
+          credentialState: "CONSUMED",
+          note: "The one-shot credential was received; verifying the password field before submission."
+        });
         await persistState();
         const latestFrame = await chrome.webNavigation.getFrame({ tabId, frameId: 0 });
         let latestUrl;
@@ -709,6 +752,7 @@ async function automateGoogle(run, tabId, documentId) {
         if (passwordStep === "PASSWORD_SUBMITTED") {
           updateRun(run, {
             stage: "PASSWORD_SUBMITTED",
+            credentialSubmitted: true,
             note: "The one-shot credential was submitted and discarded from extension memory."
           });
           chrome.alarms.create(authAlarmName(run.requestId), { delayInMinutes: AUTH_TIMEOUT_MINUTES });

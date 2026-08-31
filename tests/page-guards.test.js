@@ -5,6 +5,16 @@ const fs = require("fs");
 const vm = require("vm");
 
 const noopEvent = { addListener() {} };
+class FakeInput {
+  constructor() { this._value = ""; this.events = []; this.focused = false; }
+  get value() { return this._value; }
+  set value(value) { this._value = value; }
+  focus() { this.focused = true; }
+  dispatchEvent(event) { this.events.push(event.type); return true; }
+}
+class FakeEvent {
+  constructor(type, options = {}) { this.type = type; Object.assign(this, options); }
+}
 const chrome = {
   alarms: { onAlarm: noopEvent },
   extension: {},
@@ -23,6 +33,9 @@ const context = vm.createContext({
   Date,
   Number,
   Error,
+  Event: FakeEvent,
+  InputEvent: FakeEvent,
+  HTMLInputElement: FakeInput,
   setTimeout,
   clearTimeout,
   location: { pathname: "/v3/signin/challenge/pwd" },
@@ -57,6 +70,29 @@ function googleDocument(selectedControls, unrelatedTarget = false) {
   };
 }
 
+function googlePasswordDocument(selectedControls) {
+  const passwordInput = new FakeInput();
+  const passwordButton = {
+    disabled: false,
+    clicks: 0,
+    getAttribute() { return null; },
+    click() { this.clicks += 1; }
+  };
+  return {
+    passwordInput,
+    passwordButton,
+    querySelector(selector) {
+      if (selector.includes("recaptcha") || selector.includes("one-time-code")) return null;
+      if (selector.includes("input[name='Passwd']")) return passwordInput;
+      if (selector.includes("#passwordNext")) return passwordButton;
+      return null;
+    },
+    querySelectorAll(selector) {
+      return selector.includes("jsname='af8ijd'") ? selectedControls : [];
+    }
+  };
+}
+
 function geminiDocument(activeControls) {
   return {
     querySelectorAll(selector) {
@@ -78,23 +114,40 @@ assert.equal(context.inspectGooglePage(target).step, "TARGET_ACCOUNT_NOT_CONFIRM
 context.document = googleDocument([accountControl(target), accountControl(target)]);
 assert.equal(context.inspectGooglePage(target).step, "TARGET_ACCOUNT_NOT_CONFIRMED");
 
-context.document = googleDocument([accountControl(other)]);
-assert.equal(context.submitPassword(target, "test-only", "/other/document").step, "STALE_PASSWORD_DOCUMENT");
-assert.equal(
-  context.submitPassword(target, "test-only", "/v3/signin/challenge/pwd").step,
-  "TARGET_ACCOUNT_NOT_CONFIRMED"
-);
+async function main() {
+  context.document = googleDocument([accountControl(other)]);
+  assert.equal((await context.submitPassword(target, "test-only", "/other/document")).step, "STALE_PASSWORD_DOCUMENT");
+  assert.equal(
+    (await context.submitPassword(target, "test-only", "/v3/signin/challenge/pwd")).step,
+    "TARGET_ACCOUNT_NOT_CONFIRMED"
+  );
 
-context.document = geminiDocument([accountControl(target)]);
-assert.equal(context.inspectGeminiActiveAccount(target), true);
+  const passwordDocument = googlePasswordDocument([accountControl(target)]);
+  context.document = passwordDocument;
+  const submitted = await context.submitPassword(target, "test-only", "/v3/signin/challenge/pwd");
+  assert.equal(submitted.step, "PASSWORD_SUBMITTED");
+  assert.equal(passwordDocument.passwordInput.value, "test-only");
+  assert.equal(passwordDocument.passwordInput.focused, true);
+  assert.equal(passwordDocument.passwordInput.events.includes("input"), true);
+  assert.equal(passwordDocument.passwordButton.clicks, 1);
 
-context.document = geminiDocument([accountControl(target), accountControl(other)]);
-assert.equal(context.inspectGeminiActiveAccount(target), false);
+  context.document = geminiDocument([accountControl(target)]);
+  assert.equal(context.inspectGeminiActiveAccount(target), true);
 
-context.document = geminiDocument([accountControl(other)]);
-assert.equal(context.injectPrompt(target, "POC prompt").error, "TARGET_ACCOUNT_NOT_CONFIRMED");
+  context.document = geminiDocument([accountControl(target), accountControl(other)]);
+  assert.equal(context.inspectGeminiActiveAccount(target), false);
 
-console.log("PASS google-password-requires-one-selected-account-control");
-console.log("PASS unrelated-or-multiple-account-evidence-fails-closed");
-console.log("PASS stale-password-path-fails-before-dom-write");
-console.log("PASS gemini-active-account-guard-is-strict");
+  context.document = geminiDocument([accountControl(other)]);
+  assert.equal(context.injectPrompt(target, "POC prompt").error, "TARGET_ACCOUNT_NOT_CONFIRMED");
+
+  console.log("PASS google-password-requires-one-selected-account-control");
+  console.log("PASS unrelated-or-multiple-account-evidence-fails-closed");
+  console.log("PASS stale-password-path-fails-before-dom-write");
+  console.log("PASS password-value-is-verified-before-single-submit-click");
+  console.log("PASS gemini-active-account-guard-is-strict");
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

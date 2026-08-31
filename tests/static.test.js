@@ -11,7 +11,7 @@ const broker = fs.readFileSync("functions/index.js", "utf8");
 const brokerCore = fs.readFileSync("functions/broker-core.js", "utf8");
 const firebase = JSON.parse(fs.readFileSync("firebase.json", "utf8"));
 
-assert.equal(manifest.version, "0.13.0");
+assert.equal(manifest.version, "0.13.1");
 assert.match(worker, /AUTH_TIMEOUT_MINUTES = 15/);
 assert.match(worker, /RUN_TTL_MS = 20 \* 60 \* 1000/);
 assert.match(app, /POLL_TIMEOUT_MS = 20 \* 60 \* 1000/);
@@ -59,6 +59,8 @@ assert.match(worker, /documentIds/);
 assert.match(worker, /webNavigation\.getFrame/);
 assert.match(worker, /windows\.getAll/);
 assert.match(worker, /credentialState/);
+assert.match(worker, /credentialSubmitted/);
+assert.match(worker, /INJECTING_PASSWORD/);
 assert.match(worker, /OPENING_ISOLATED_GEMINI_TAB/);
 assert.match(worker, /chrome\.tabs\.create/);
 assert.match(worker, /chrome\.tabs\.reload/);

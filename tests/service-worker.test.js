@@ -35,7 +35,7 @@ const chrome = {
     isAllowedIncognitoAccess(callback) { callback(true); }
   },
   runtime: {
-    getManifest() { return { version: "0.13.0" }; },
+    getManifest() { return { version: "0.13.1" }; },
     onMessageExternal: event("external"),
     onMessage: event("internal")
   },
@@ -174,7 +174,7 @@ async function flush(rounds = 8) {
 
 async function main() {
   const ping = await external({ type: "PING", version: 10 });
-  assert.equal(ping.version, "0.13.0");
+  assert.equal(ping.version, "0.13.1");
   assert.equal(ping.protocolVersion, 10);
   assert.equal(ping.capability, "EXTENSION_AGENT_HTTPS_BROKER");
   assert.equal(ping.incognitoAccessAllowed, true);
@@ -227,6 +227,7 @@ async function main() {
   await flush();
   let status = await external({ type: "GET_STATUS", version: 10, requestId });
   assert.equal(status.run.credentialDelivered, true);
+  assert.equal(status.run.credentialSubmitted, true);
   assert.equal(status.run.authTabId, 81);
   assert.equal(status.run.geminiTabId, 82);
   assert.equal(createdTabs.length, 1);

@@ -12,14 +12,14 @@ Production URL: <https://poc-after-sso-login-gemini.web.app/>
 4. Extension เปิด InPrivate/Incognito window ใหม่แบบ minimized แล้วเริ่ม Google-to-Gemini flow
 5. เมื่อ exact Google document อยู่ที่ `/challenge/pwd` และ selected account เป็น `codeassist.04@easybuy.co.th` เพียงบัญชีเดียว Extension จึงส่ง bearer ID token ไปขอ credential แบบ one-shot
 6. Backend อ่าน Google password จาก Firebase Secret Manager แล้วตอบตรงให้ Extension ผ่าน HTTPS โดยตั้ง `Cache-Control: no-store`
-7. Extension ใช้ password ใน memory เพื่อกรอก exact document, กด Next, ตั้งค่า object เป็นค่าว่าง/null และไม่ขอซ้ำ
+7. Extension ใช้ password ใน memory, focus และ set exact input, รอ Google DOM, ตรวจว่า input ถือค่าจริงก่อนกด Next หนึ่งครั้ง แล้วตั้งค่า object เป็นค่าว่าง/null และไม่ขอซ้ำ
 8. Extension เปิด Gemini tab ใน isolated window เดิม รอ session, reload หนึ่งครั้ง, ยืนยัน exact target account, ปิด auth tab และแสดง Gemini เหลือหนึ่ง tab
 
 ถ้า Google ขอ MFA, CAPTCHA, passkey, device approval หรือหน้า password ไม่ผูกกับ target account ระบบ fail closed และไม่พยายาม bypass challenge
 
 ## ติดตั้งบนเครื่องผู้ใช้
 
-1. ดาวน์โหลด `gemini-extension-agent-poc-v0.13.0.zip` จากหน้า Production แล้วแตกไฟล์
+1. ดาวน์โหลด `gemini-extension-agent-poc-v0.13.1.zip` จากหน้า Production แล้วแตกไฟล์
 2. เปิด `edge://extensions` หรือ `chrome://extensions`
 3. เปิด Developer mode แล้วเลือก Load unpacked ที่โฟลเดอร์ `extension`
 4. เปิด Details และเปิด Allow in InPrivate/Incognito หนึ่งครั้ง
@@ -31,6 +31,7 @@ Production URL: <https://poc-after-sso-login-gemini.web.app/>
 
 - POC และ Google passwords อยู่ที่ backend secrets `POC_FIREBASE_PASSWORD` และ `GEMINI_TARGET_PASSWORD` เท่านั้น ไม่อยู่ใน Git, ZIP, Hosted page หรือ Extension source
 - Extension ขอ password เมื่อถึง exact password form เท่านั้น ไม่ prefetch
+- หน้า POC แยกสถานะ `Received; submit pending` ออกจาก `Submitted once` จึงไม่รายงานว่าส่งสำเร็จก่อนกรอกและกด Next จริง
 - คำขอผูกกับ Firebase ID token, exact UID, request UUID, protocol version และ fixed Extension origin
 - run ใช้สถานะ atomic `NOT_REQUESTED → REQUESTING → CONSUMED`; worker restart หลังเริ่ม request จะไม่ claim credential ซ้ำ
 - password ไม่ถูกใส่ใน run status หรือ `chrome.storage`; หลัง script call จะถูก overwrite และปล่อย reference
@@ -75,7 +76,7 @@ Cloud Function ใช้ Node.js 22, `minInstances: 0` และ scale to zero �
 ## E2E acceptance
 
 1. ปิด InPrivate/Incognito windows ทั้งหมดเพื่อล้าง isolated Google session
-2. Reload Extension v0.13.0 และเปิด Allow in InPrivate/Incognito
+2. Reload Extension v0.13.1 และเปิด Allow in InPrivate/Incognito
 3. เปิด Production URL แล้วกด Login ครั้งเดียว
 4. ผู้ใช้ต้องไม่กรอกหรือคลิก Google login UI
 5. หน้า POC ต้องแสดง credential delivered once และ `GEMINI_TARGET_ACCOUNT_CONFIRMED`

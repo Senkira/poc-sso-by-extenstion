@@ -1,7 +1,7 @@
 "use strict";
 
 const EXTENSION_ID = "jeenmgigpkffleijbmfciffiodlcdafh";
-const REQUIRED_EXTENSION_VERSION = "0.13.0";
+const REQUIRED_EXTENSION_VERSION = "0.13.1";
 const PROTOCOL_VERSION = 10;
 const CAPABILITY = "EXTENSION_AGENT_HTTPS_BROKER";
 const POC_USERNAME = "O1234567";
@@ -180,7 +180,9 @@ function renderRun(run) {
   elements.requestValue.textContent = run.requestId;
   elements.stageValue.textContent = run.stage;
   elements.originValue.textContent = run.observedOrigin || "—";
-  elements.credentialValue.textContent = run.credentialDelivered ? "Delivered once" : "Pending";
+  elements.credentialValue.textContent = run.credentialSubmitted
+    ? "Submitted once"
+    : run.credentialDelivered ? "Received; submit pending" : "Pending";
   elements.accountValue.textContent = run.targetAccountConfirmed
     ? "Confirmed"
     : run.identityCheckComplete ? "Not confirmed" : "Pending";
