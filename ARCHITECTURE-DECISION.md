@@ -10,7 +10,7 @@
 
 ## Authentication gates
 
-หน้า POC รับเฉพาะ Employee ID `O1234567` แบบ read-only และส่งคำขอไป fixed Extension ID จาก production origin/main frame เท่านั้น Extension เรียก broker เพื่อ mint Firebase ID token สำหรับ exact UID จากนั้นตรวจ token กับ Identity Toolkit ก่อนเปิด run
+หน้า POC รับเฉพาะ Employee ID `O1234567` แบบ read-only และส่งคำขอไป fixed Extension ID จาก production origin/main frame เท่านั้น Extension เรียก broker; broker ใช้ `POC_FIREBASE_PASSWORD` จาก Secret Manager ยืนยัน Firebase Auth และ pin exact UID จากนั้น Extension ตรวจ token กับ Identity Toolkit ก่อนเปิด run
 
 เมื่อขอ Google credential broker ตรวจ bearer Firebase ID token, exact UID/email, request schema, UUID, protocol version และ exact Extension origin ก่อนอ่าน `GEMINI_TARGET_PASSWORD` Secret Manager
 

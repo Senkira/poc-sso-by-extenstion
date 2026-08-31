@@ -38,7 +38,7 @@ if ($worker -notmatch 'accounts:lookup' -or $worker -notmatch 'POC_AUTH_REQUIRED
 if ($worker -notmatch 'isAllowedIncognitoAccess' -or $app -notmatch 'incognitoAccessAllowed') { throw 'InPrivate permission gate is missing.' }
 if ($worker -match 'chrome\.storage\.(local|sync)' -or $worker -notmatch 'chrome\.storage\.session') { throw 'Only session storage is allowed.' }
 if (($worker + $app + $html + $broker + $brokerCore) -match '(?i)@[s]{2}w0rd') { throw 'A password-like literal is present in source.' }
-if ($broker -notmatch 'defineSecret\("GEMINI_TARGET_PASSWORD"\)' -or $broker -notmatch 'verifyIdToken') { throw 'Backend secret or Firebase authorization gate is missing.' }
+if ($broker -notmatch 'defineSecret\("GEMINI_TARGET_PASSWORD"\)' -or $broker -notmatch 'defineSecret\("POC_FIREBASE_PASSWORD"\)' -or $broker -notmatch 'verifyIdToken' -or $broker -notmatch 'accounts:signInWithPassword') { throw 'Backend secrets or Firebase authorization gate is missing.' }
 if ($broker -notmatch 'minInstances: 0' -or $brokerCore -notmatch [regex]::Escape("chrome-extension://$expectedExtensionId")) { throw 'Broker scaling or exact extension-origin gate is missing.' }
 if ($firebase.functions.source -ne 'functions' -or $firebase.functions.runtime -ne 'nodejs22') { throw 'Firebase Functions runtime is not configured.' }
 if ($functionsPackage.engines.node -ne '22') { throw 'Backend Node runtime mismatch.' }

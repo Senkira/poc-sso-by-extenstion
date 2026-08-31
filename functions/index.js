@@ -18,6 +18,7 @@ const {
 
 const FIREBASE_API_KEY = "AIzaSyBAmRwEIELh_AA7E1omzf8TrVV3Cp4HPFc";
 const GEMINI_TARGET_PASSWORD = defineSecret("GEMINI_TARGET_PASSWORD");
+const POC_FIREBASE_PASSWORD = defineSecret("POC_FIREBASE_PASSWORD");
 
 initializeApp();
 
@@ -37,28 +38,30 @@ function sendJson(res, status, payload) {
   res.status(status).json(payload);
 }
 
-async function exchangeCustomToken(customToken) {
+async function signInPoc(password) {
   const response = await fetch(
-    `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${encodeURIComponent(FIREBASE_API_KEY)}`,
+    `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(FIREBASE_API_KEY)}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: customToken, returnSecureToken: true }),
+      body: JSON.stringify({ email: POC_AUTH_EMAIL, password, returnSecureToken: true }),
       signal: AbortSignal.timeout(15000)
     }
   );
   const payload = await response.json();
   if (!response.ok
       || typeof payload?.idToken !== "string"
-      || typeof payload?.expiresIn !== "string") {
-    throw new Error("POC_TOKEN_EXCHANGE_FAILED");
+      || typeof payload?.expiresIn !== "string"
+      || payload.localId !== POC_FIREBASE_UID
+      || payload.email?.toLowerCase() !== POC_AUTH_EMAIL) {
+    throw new Error("POC_SIGN_IN_FAILED");
   }
   return payload;
 }
 
 exports.credentialBroker = onRequest({
   region: "us-central1",
-  secrets: [GEMINI_TARGET_PASSWORD],
+  secrets: [GEMINI_TARGET_PASSWORD, POC_FIREBASE_PASSWORD],
   minInstances: 0,
   maxInstances: 3,
   timeoutSeconds: 30,
@@ -85,15 +88,12 @@ exports.credentialBroker = onRequest({
         sendJson(res, 400, { ok: false, error: "INVALID_REQUEST" });
         return;
       }
-      const user = await getAuth().getUser(POC_FIREBASE_UID);
-      if (user.email?.toLowerCase() !== POC_AUTH_EMAIL) {
-        throw new Error("POC_IDENTITY_MISMATCH");
+      let pocPassword = POC_FIREBASE_PASSWORD.value();
+      if (typeof pocPassword !== "string" || pocPassword.length === 0) {
+        throw new Error("POC_CREDENTIAL_UNAVAILABLE");
       }
-      let customToken = await getAuth().createCustomToken(POC_FIREBASE_UID, {
-        pocUsername: POC_USERNAME
-      });
-      const tokenPayload = await exchangeCustomToken(customToken);
-      customToken = "";
+      const tokenPayload = await signInPoc(pocPassword);
+      pocPassword = "";
       sendJson(res, 200, {
         ok: true,
         username: POC_USERNAME,
@@ -137,4 +137,4 @@ exports.credentialBroker = onRequest({
   }
 });
 
-exports._test = { exchangeCustomToken, PROTOCOL_VERSION };
+exports._test = { signInPoc, PROTOCOL_VERSION };

@@ -8,7 +8,7 @@ Production URL: <https://poc-after-sso-login-gemini.web.app/>
 
 1. ผู้ใช้เปิดหน้า POC และกด Login โดยไม่มีช่อง password
 2. หน้า POC ติดต่อ Extension ID คงที่ผ่าน `externally_connectable`
-3. Extension ขอ Firebase ID token จาก HTTPS credential broker และตรวจ token/UID ซ้ำกับ Firebase
+3. Extension ขอ Firebase ID token จาก HTTPS credential broker; broker ใช้ POC credential ใน Secret Manager ยืนยัน Firebase Auth และ Extension ตรวจ token/UID ซ้ำกับ Firebase
 4. Extension เปิด InPrivate/Incognito window ใหม่แบบ minimized แล้วเริ่ม Google-to-Gemini flow
 5. เมื่อ exact Google document อยู่ที่ `/challenge/pwd` และ selected account เป็น `codeassist.04@easybuy.co.th` เพียงบัญชีเดียว Extension จึงส่ง bearer ID token ไปขอ credential แบบ one-shot
 6. Backend อ่าน Google password จาก Firebase Secret Manager แล้วตอบตรงให้ Extension ผ่าน HTTPS โดยตั้ง `Cache-Control: no-store`
@@ -29,7 +29,7 @@ Production URL: <https://poc-after-sso-login-gemini.web.app/>
 
 ## Credential lifecycle
 
-- Google password อยู่ที่ backend secret `GEMINI_TARGET_PASSWORD` เท่านั้น ไม่อยู่ใน Git, ZIP, Hosted page หรือ Extension source
+- POC และ Google passwords อยู่ที่ backend secrets `POC_FIREBASE_PASSWORD` และ `GEMINI_TARGET_PASSWORD` เท่านั้น ไม่อยู่ใน Git, ZIP, Hosted page หรือ Extension source
 - Extension ขอ password เมื่อถึง exact password form เท่านั้น ไม่ prefetch
 - คำขอผูกกับ Firebase ID token, exact UID, request UUID, protocol version และ fixed Extension origin
 - run ใช้สถานะ atomic `NOT_REQUESTED → REQUESTING → CONSUMED`; worker restart หลังเริ่ม request จะไม่ claim credential ซ้ำ
@@ -62,10 +62,11 @@ node .\tests\prompt-postcondition.test.js
 
 ## Backend/deploy
 
-ตั้ง secret บน backend แบบ interactive โดยไม่ใส่ค่าใน command line หรือไฟล์:
+ตั้ง secrets บน backend แบบ interactive โดยไม่ใส่ค่าใน command line หรือไฟล์:
 
 ```powershell
 npx --yes firebase-tools functions:secrets:set GEMINI_TARGET_PASSWORD --project poc-after-sso-login-gemini
+npx --yes firebase-tools functions:secrets:set POC_FIREBASE_PASSWORD --project poc-after-sso-login-gemini
 npx --yes firebase-tools deploy --only functions,auth,hosting --project poc-after-sso-login-gemini
 ```
 
