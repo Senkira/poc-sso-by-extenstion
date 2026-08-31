@@ -101,7 +101,7 @@ sequenceDiagram
     Ext->>Google: executeScript(submitPassword(email, password, expectedPath))
     Note over Ext,Google: Wait 2000 ms, set native input value, wait 80 ms, verify value, click passwordNext
     Google-->>Ext: {step: PASSWORD_SUBMITTED}
-    Ext->>Ext: credential.password = empty; credential = null; state = CONSUMED
+    Ext->>Ext: Clear password reference and set credentialState to CONSUMED
 
     Ext->>Gemini: openIsolatedGeminiTab() in same window
     Google-->>Ext: Auth tab reaches gemini.google.com = login success
