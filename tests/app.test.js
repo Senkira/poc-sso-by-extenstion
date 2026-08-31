@@ -45,7 +45,7 @@ const chrome = {
       if (message.type === "PING") {
         callback({
           ok: true,
-          version: "0.13.3",
+          version: "0.13.5",
           protocolVersion: 10,
           capability: "EXTENSION_AGENT_HTTPS_BROKER",
           incognitoAccessAllowed: true
@@ -114,7 +114,7 @@ async function main() {
   assert.equal(elements.get("#launcher-panel").hidden, true);
   assert.equal(elements.get("#username").value, "O1234567");
   assert.equal(elements.get("#preflight-badge").textContent, "Connected");
-  assert.match(elements.get("#preflight-detail").textContent, /0\.13\.3/);
+  assert.match(elements.get("#preflight-detail").textContent, /0\.13\.5/);
 
   elements.get("#login-form").listeners.submit({ preventDefault() {} });
   await flush();

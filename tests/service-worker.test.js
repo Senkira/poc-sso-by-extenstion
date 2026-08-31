@@ -35,7 +35,7 @@ const chrome = {
     isAllowedIncognitoAccess(callback) { callback(true); }
   },
   runtime: {
-    getManifest() { return { version: "0.13.3" }; },
+    getManifest() { return { version: "0.13.5" }; },
     onMessageExternal: event("external"),
     onMessage: event("internal")
   },
@@ -174,7 +174,7 @@ async function flush(rounds = 8) {
 
 async function main() {
   const ping = await external({ type: "PING", version: 10 });
-  assert.equal(ping.version, "0.13.3");
+  assert.equal(ping.version, "0.13.5");
   assert.equal(ping.protocolVersion, 10);
   assert.equal(ping.capability, "EXTENSION_AGENT_HTTPS_BROKER");
   assert.equal(ping.incognitoAccessAllowed, true);
@@ -270,6 +270,13 @@ async function main() {
   currentFrame = { documentId: "auth-finished-doc", url: "https://gemini.google.com/app" };
   listeners.completed({ frameId: 0, tabId: 81, documentId: currentFrame.documentId, url: currentFrame.url });
   await flush();
+  const savedAfterGoogleLogin = sessionState.geminiExtensionAgentV10.runs
+    .find((run) => run.requestId === requestId);
+  assert.equal(savedAfterGoogleLogin.googleSessionEstablished, true);
+  assert.equal(savedAfterGoogleLogin.geminiReloaded, true);
+  assert.deepEqual(reloadedTabs, [82]);
+  assert.equal(updatedWindows.length, 0);
+  assert.equal(removedTabs.length, 0);
 
   const postAuthGeminiFrame = { documentId: "gemini-post-auth-miss-doc", url: "https://gemini.google.com/app" };
   tabFrames.set(82, postAuthGeminiFrame);
@@ -288,28 +295,7 @@ async function main() {
   status = await external({ type: "GET_STATUS", version: 10, requestId });
   assert.equal(status.run.closed, false);
 
-  currentFrame = { documentId: "gemini-doc-before-reload", url: "https://gemini.google.com/app" };
-  tabFrames.set(82, currentFrame);
-  listeners.committed({ frameId: 0, tabId: 82, documentId: currentFrame.documentId, url: currentFrame.url });
-  await flush();
-  const reloadSignal = await internal(
-    { type: "GEMINI_DOCUMENT_SIGNAL", version: 10, targetAccountObserved: true, identityCheckComplete: true },
-    {
-      frameId: 0,
-      documentId: currentFrame.documentId,
-      url: currentFrame.url,
-      tab: { id: 82, incognito: true }
-    }
-  );
-  assert.equal(reloadSignal.reloading, true);
-  status = await external({ type: "GET_STATUS", version: 10, requestId });
-  assert.equal(status.run.stage, "RELOADING_GEMINI");
-  assert.equal(status.run.targetAccountConfirmed, false);
-  assert.deepEqual(reloadedTabs, [82]);
-  assert.equal(updatedWindows.length, 0);
-  assert.equal(removedTabs.length, 0);
-
-  currentFrame = { documentId: "gemini-doc-after-reload", url: "https://gemini.google.com/app" };
+  currentFrame = { documentId: "gemini-doc-after-login-reload", url: "https://gemini.google.com/app" };
   tabFrames.set(82, currentFrame);
   listeners.committed({ frameId: 0, tabId: 82, documentId: currentFrame.documentId, url: currentFrame.url });
   await flush();

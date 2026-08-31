@@ -569,7 +569,7 @@ async function submitPassword(targetEmail, password, expectedPath) {
     }
 
     const delayedInput = input;
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await new Promise((resolve) => setTimeout(resolve, 2000));
     if (location.pathname !== expectedPath || !exactSelectedAccount(targetEmail)) {
       return { step: "STALE_PASSWORD_DOCUMENT" };
     }
@@ -774,7 +774,7 @@ async function automateGoogle(run, tabId, documentId) {
           credentialDelivered: true,
           credentialSubmitted: false,
           credentialState: "CONSUMED",
-          note: "The credential was received; waiting three seconds for the password field to settle before submission."
+          note: "The credential was received; waiting two seconds for the password field to settle before submission."
         });
         await persistState();
         const latestFrame = await chrome.webNavigation.getFrame({ tabId, frameId: 0 });
@@ -863,17 +863,21 @@ async function handleNavigation(details) {
         await automateGoogle(run, details.tabId, details.documentId);
       }
     } else if (url.origin === "https://gemini.google.com" && !run.googleSessionEstablished) {
-      updateRun(run, run.geminiReloaded ? {
-        googleSessionEstablished: true
-      } : {
+      updateRun(run, {
         googleSessionEstablished: true,
+        geminiReloaded: Number.isInteger(run.geminiTabId),
         geminiReadyForIdentityFailure: false,
-        stage: "GOOGLE_SESSION_ESTABLISHED",
-        note: "The isolated Google session is ready; refreshing the dedicated Gemini tab."
+        stage: "RELOADING_GEMINI_AFTER_LOGIN",
+        note: "Google login succeeded; reloading Gemini so it receives the authenticated session."
       });
       await persistState();
-      if (Number.isInteger(run.geminiTabId) && !run.geminiReloaded) {
-        await chrome.tabs.update(run.geminiTabId, { url: GEMINI_URL, active: true });
+      if (Number.isInteger(run.geminiTabId)) {
+        try {
+          await chrome.tabs.reload(run.geminiTabId);
+          await chrome.tabs.update(run.geminiTabId, { active: true });
+        } catch {
+          await failRun(run, "GEMINI_RELOAD_FAILED", "Gemini could not be reloaded after Google login succeeded.");
+        }
       }
     }
   } else if (details.tabId === run.geminiTabId) {

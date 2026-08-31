@@ -138,7 +138,7 @@ async function main() {
   assert.equal(passwordDocument.passwordInput.focused, true);
   assert.equal(passwordDocument.passwordInput.events.includes("input"), true);
   assert.equal(passwordDocument.passwordButton.clicks, 1);
-  assert.equal(observedDelays.includes(3000), true);
+  assert.equal(observedDelays.includes(2000), true);
   assert.equal(observedDelays.includes(80), true);
 
   context.document = geminiDocument([accountControl(target)]);
@@ -157,7 +157,7 @@ async function main() {
   console.log("PASS unrelated-or-conflicting-account-evidence-fails-closed");
   console.log("PASS stale-password-path-fails-before-dom-write");
   console.log("PASS password-value-is-verified-before-single-submit-click");
-  console.log("PASS password-fill-waits-three-seconds-then-submits-after-80ms");
+  console.log("PASS password-fill-waits-two-seconds-then-submits-after-80ms");
   console.log("PASS gemini-active-account-guard-is-strict");
 }
 

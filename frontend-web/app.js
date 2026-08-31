@@ -1,7 +1,7 @@
 "use strict";
 
 const EXTENSION_ID = "jeenmgigpkffleijbmfciffiodlcdafh";
-const REQUIRED_EXTENSION_VERSION = "0.13.3";
+const REQUIRED_EXTENSION_VERSION = "0.13.5";
 const PROTOCOL_VERSION = 10;
 const CAPABILITY = "EXTENSION_AGENT_HTTPS_BROKER";
 const POC_USERNAME = "O1234567";
