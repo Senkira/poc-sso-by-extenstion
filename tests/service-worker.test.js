@@ -35,7 +35,7 @@ const chrome = {
     isAllowedIncognitoAccess(callback) { callback(true); }
   },
   runtime: {
-    getManifest() { return { version: "0.12.0" }; },
+    getManifest() { return { version: "0.12.1" }; },
     async sendNativeMessage(host, message) {
       nativeMessages.push({ host, message });
       assert.equal(message.version, 9);
@@ -161,7 +161,7 @@ async function flush(rounds = 8) {
 
 async function main() {
   const ping = await external({ type: "PING", version: 9 });
-  assert.equal(ping.version, "0.12.0");
+  assert.equal(ping.version, "0.12.1");
   assert.equal(ping.protocolVersion, 9);
   assert.equal(ping.capability, "EXTENSION_AGENT_ONE_SHOT_BRIDGE");
   assert.equal(ping.incognitoAccessAllowed, true);
@@ -228,6 +228,7 @@ async function main() {
   assert.equal(nativeMessages[1].host, "com.senkira.gemini_extension_agent");
   assert.equal(nativeMessages[1].message.action, "getGoogleCredential");
   assert.equal(createdAlarms[0].name, `gemini-auth-timeout:${requestId}`);
+  assert.equal(createdAlarms[0].options.delayInMinutes, 5);
 
   const preAuthGeminiFrame = { documentId: "gemini-pre-auth-doc", url: "https://gemini.google.com/app" };
   tabFrames.set(82, preAuthGeminiFrame);

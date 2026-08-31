@@ -10,7 +10,8 @@ const worker = fs.readFileSync("extension/service-worker.js", "utf8");
 const host = fs.readFileSync("bootstrap/NativeHost.cs", "utf8");
 const firebase = JSON.parse(fs.readFileSync("firebase.json", "utf8"));
 
-assert.equal(manifest.version, "0.12.0");
+assert.equal(manifest.version, "0.12.1");
+assert.match(worker, /AUTH_TIMEOUT_MINUTES = 5/);
 assert.equal(manifest.incognito, "spanning");
 assert.equal(manifest.permissions.includes("nativeMessaging"), true);
 assert.equal(manifest.permissions.includes("alarms"), true);
