@@ -15,7 +15,7 @@ Chrome และ Edge ใช้ extension package เดียวกัน เ�
 
 ผล v0.5.0 **ยังไม่ผ่าน acceptance ข้อ 3-4** จึงห้ามเรียกว่า zero-touch login สำเร็จ สิ่งที่พิสูจน์แล้วคือ Firebase Hosting ติดต่อ fixed-ID extension ได้จริง, extension เปิด InPrivate ได้จริง, เลือก/กรอก email เป้าหมายได้จริง และรายงาน failure แบบ fail-closed เมื่อ Google ขอ credential หรือ challenge
 
-ข้อจำกัดที่ตั้งไว้คือไม่มี SSO, local server, Node.js, PowerShell, custom protocol, Native Messaging, Functions หรือ Cloud Run ใน runtime ของเครื่องปลายทาง และ extension ห้ามรับ/เก็บ/inject Google password ภายใต้ขอบเขตนี้ไม่มี credential authority ที่สามารถมอบหลักฐานยืนยันตัวตนให้ Google ได้ การกด Login บนเว็บ POC ไม่สามารถสร้าง Google session ได้เอง
+ข้อจำกัดที่ตั้งไว้คือไม่มี SSO, local server, Node.js, PowerShell, custom protocol, Native Messaging, Functions หรือ Cloud Run ใน runtime ของเครื่องปลายทาง, extension ห้ามรับ/เก็บ/inject Google password และ objective ล่าสุดห้าม prior login, prior session, one-time first login หรือ one-time provisioning ทุกชนิด ภายใต้ขอบเขตนี้ไม่มี credential authority ที่สามารถมอบหลักฐานยืนยันตัวตนให้ Google ได้ การกด Login บนเว็บ POC ไม่สามารถสร้าง Google session ได้เอง
 
 Red-team เพิ่มพบ test-only loophole ผ่าน `chrome.debugger` + CDP virtual WebAuthn แต่ต้องเก็บ Google-registered private key และจำลอง user presence/verification จึงไม่ใช่ secretless หรือ supported production authentication Production extension นี้จงใจไม่ขอ `debugger` permission และ verifier ห้ามทั้ง virtual authenticator กับ reusable private key รายละเอียดอยู่ใน architecture decision
 

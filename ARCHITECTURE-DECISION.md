@@ -10,10 +10,11 @@
 4. ผู้ใช้ส่ง prompt และใช้ Gemini ของบัญชีเป้าหมายได้
 5. ไม่ใช้ SSO, backend, Native Messaging, PowerShell หรือ Node.js บนเครื่องปลายทาง
 6. Google password ต้องไม่อยู่ใน static Hosting, extension package, extension storage, message, status หรือ log
+7. ห้ามอาศัย prior login, prior Google session, one-time first login หรือ one-time provisioning ทุกชนิด
 
 ## Current verdict
 
-**Static Firebase Hosting + extension-only ไม่สามารถทำข้อ 3 แบบ deterministic และปลอดภัยภายใต้ requirement ทั้งหมดพร้อมกันได้ เมื่อ client ห้าม persist reusable authentication proof ทุกชนิด**
+**Static Firebase Hosting + extension-only ไม่สามารถทำข้อ 3 ได้ภายใต้ requirement ทั้งหมดพร้อมกัน เมื่อห้ามทั้ง prior authentication และแหล่ง reusable authentication proof ทุกชนิด**
 
 Extension สามารถควบคุมหน้าเว็บและกรอก DOM ชั่วคราวได้ในเชิงกลไก แต่ก่อนทำเช่นนั้นต้องได้รับ Google password หรือ authentication proof จากที่ใดที่หนึ่ง ขอบเขตปัจจุบันตัดแหล่งที่มาที่เชื่อถือได้ออกทั้งหมด:
 
@@ -26,6 +27,8 @@ Extension สามารถควบคุมหน้าเว็บและ�
 | reuse/copy Google cookies | cookie คือ bearer credential, ทำลาย isolation และไม่ใช่ supported login flow |
 | backend vault/credential broker | เป็น solution boundary ที่เป็นไปได้ แต่ผิดข้อ 5 และยังรับประกันว่าจะไม่มี MFA/CAPTCHA/risk challenge ไม่ได้ |
 | Google federation/SSO | เป็น supported direction แต่ถูกตัดออกโดย requirement |
+
+Formal contradiction: fresh isolated Google session ต้องมี Google-accepted proof `P`; `P` มาจาก user interaction, client-held authenticator/session, external authority หรือ existing session ได้เท่านั้น ข้อ 3, 5, 6 และ 7 ปิดทุกแหล่งพร้อมกัน ดังนั้นเซตแหล่งที่มาของ `P` ว่าง และไม่มี browser API ที่สร้าง `P` จาก POC credential ได้เอง
 
 ### Red-team finding: virtual WebAuthn loophole
 
@@ -69,4 +72,4 @@ Provision target Google session ใน dedicated persistent profile แล้ว
 
 เก็บ v0.5.0 เป็น honest negative POC สำหรับทดสอบ extension orchestration เท่านั้น ห้ามฝัง credential จริงหรือเปลี่ยนสถานะเป็น success โดยไม่มี `GEMINI_TARGET_ACCOUNT_CONFIRMED` จาก fresh isolated run
 
-ถ้าต้องส่งมอบ flow 1-4 จริง ต้องผ่อนอย่างน้อยหนึ่ง boundary: อนุญาต supported federation/SSO, อนุญาต trusted credential broker พร้อมยอมรับ Google challenge risk, หรือยอมใช้ dedicated pre-authenticated profile/session reuse
+ถ้าต้องส่งมอบ flow 1-4 จริง ต้องผ่อนอย่างน้อยหนึ่ง authentication-proof boundary: อนุญาต supported federation/SSO, อนุญาต trusted credential broker พร้อมยอมรับ Google challenge risk, อนุญาต client-held authenticator หรือยอมใช้ pre-authenticated session การซ่อน Google UI หรือเรียกว่า “แอบ login” ไม่ใช่การเพิ่มแหล่ง proof
