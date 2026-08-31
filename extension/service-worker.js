@@ -4,6 +4,7 @@ const PROTOCOL_VERSION = 9;
 const ALLOWED_ORIGIN = "https://poc-after-sso-login-gemini.web.app";
 const TARGET_EMAIL = "codeassist.04@easybuy.co.th";
 const LOGIN_URL = "https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fgemini.google.com%2Fapp&followup=https%3A%2F%2Fgemini.google.com%2Fapp";
+const COVER_URL = "https://poc-after-sso-login-gemini.web.app/loading.html";
 const NATIVE_HOST = "com.senkira.gemini_extension_agent";
 const FIREBASE_API_KEY = "AIzaSyBAmRwEIELh_AA7E1omzf8TrVV3Cp4HPFc";
 const POC_AUTH_EMAIL = "o1234567@poc.invalid";
@@ -67,6 +68,7 @@ function publicRun(run) {
     updatedAt: run.updatedAt,
     windowId: Number.isInteger(run.windowId) ? run.windowId : null,
     tabId: Number.isInteger(run.tabId) ? run.tabId : null,
+    coverTabId: Number.isInteger(run.coverTabId) ? run.coverTabId : null,
     incognito: run.incognito === true,
     observedOrigin: run.observedOrigin || null,
     targetAccountConfirmed: run.targetAccountConfirmed === true,
@@ -84,7 +86,8 @@ function persistedRun(run) {
     pocUid: typeof run.pocUid === "string" ? run.pocUid : null,
     currentDocumentId: typeof run.currentDocumentId === "string" ? run.currentDocumentId : null,
     confirmedDocumentId: typeof run.confirmedDocumentId === "string" ? run.confirmedDocumentId : null,
-    currentUrl: typeof run.currentUrl === "string" ? run.currentUrl : null
+    currentUrl: typeof run.currentUrl === "string" ? run.currentUrl : null,
+    geminiReloaded: run.geminiReloaded === true
   };
 }
 
@@ -110,6 +113,7 @@ async function hydrateState() {
       updatedAt: Number.isFinite(saved.updatedAt) ? saved.updatedAt : saved.createdAt,
       windowId: Number.isInteger(saved.windowId) ? saved.windowId : null,
       tabId: Number.isInteger(saved.tabId) ? saved.tabId : null,
+      coverTabId: Number.isInteger(saved.coverTabId) ? saved.coverTabId : null,
       incognito: saved.incognito === true,
       observedOrigin: typeof saved.observedOrigin === "string" ? saved.observedOrigin : null,
       targetAccountConfirmed: saved.targetAccountConfirmed === true,
@@ -122,6 +126,7 @@ async function hydrateState() {
       currentDocumentId: typeof saved.currentDocumentId === "string" ? saved.currentDocumentId : null,
       confirmedDocumentId: typeof saved.confirmedDocumentId === "string" ? saved.confirmedDocumentId : null,
       currentUrl: typeof saved.currentUrl === "string" ? saved.currentUrl : null,
+      geminiReloaded: saved.geminiReloaded === true,
       closed: saved.closed === true,
       note: typeof saved.note === "string" ? saved.note : null
     };
@@ -324,9 +329,11 @@ async function startAgentUnlocked(message) {
     credentialDelivered: false,
     credentialState: "NOT_REQUESTED",
     pocUid,
+    coverTabId: null,
     currentDocumentId: null,
     confirmedDocumentId: null,
     currentUrl: "about:blank",
+    geminiReloaded: false,
     closed: false,
     note: "Starting the extension agent in a minimized InPrivate window."
   };
@@ -348,12 +355,21 @@ async function startAgentUnlocked(message) {
     run.windowId = createdWindow.id;
     run.tabId = tab.id;
     tabToRequest.set(tab.id, run.requestId);
+    const coverTab = await chrome.tabs.create({
+      windowId: createdWindow.id,
+      url: COVER_URL,
+      active: true
+    });
+    if (!Number.isInteger(coverTab?.id)) {
+      throw new Error("Browser did not return the isolated cover tab.");
+    }
+    run.coverTabId = coverTab.id;
     updateRun(run, {
       stage: "ISOLATED_WINDOW_CREATED",
-      note: "The isolated window is hidden while the extension agent authenticates."
+      note: "A cover tab is active while Google authentication runs in the background."
     });
     await persistState();
-    await chrome.tabs.update(tab.id, { url: LOGIN_URL });
+    await chrome.tabs.update(tab.id, { url: LOGIN_URL, active: false });
     updateRun(run, {
       stage: "NAVIGATING_TO_GOOGLE",
       note: "The isolated tab is mapped before Google navigation begins."
@@ -587,13 +603,28 @@ async function automateGoogle(run, tabId, documentId) {
         credential = await fetchOneShotCredential(run);
         updateRun(run, { credentialDelivered: true, credentialState: "CONSUMED" });
         await persistState();
-        const expectedPath = new URL(run.currentUrl).pathname;
+        const latestFrame = await chrome.webNavigation.getFrame({ tabId, frameId: 0 });
+        let latestUrl;
+        try { latestUrl = new URL(latestFrame?.url); } catch { latestUrl = null; }
+        if (!latestFrame
+            || typeof latestFrame.documentId !== "string"
+            || latestUrl?.origin !== "https://accounts.google.com"
+            || !/\/challenge\/pwd(?:\/|$)/.test(latestUrl.pathname)) {
+          throw new Error("STALE_PASSWORD_DOCUMENT");
+        }
+        const targetDocumentId = latestFrame.documentId;
+        updateRun(run, {
+          currentDocumentId: targetDocumentId,
+          currentUrl: latestFrame.url,
+          observedOrigin: latestUrl.origin
+        });
+        await persistState();
         const results = await withTimeout(chrome.scripting.executeScript({
-          target: { tabId, documentIds: [documentId] },
+          target: { tabId, documentIds: [targetDocumentId] },
           func: submitPassword,
-          args: [TARGET_EMAIL, credential.password, expectedPath]
+          args: [TARGET_EMAIL, credential.password, latestUrl.pathname]
         }), SCRIPT_TIMEOUT_MS, "PASSWORD_SUBMIT_TIMEOUT");
-        if (results?.[0]?.documentId !== documentId) {
+        if (results?.[0]?.documentId !== targetDocumentId) {
           throw new Error("STALE_PASSWORD_DOCUMENT");
         }
         const passwordStep = results?.[0]?.result?.step || "PASSWORD_FORM_UNAVAILABLE";
@@ -656,7 +687,8 @@ async function handleNavigation(details) {
     await persistState();
     await automateGoogle(run, details.tabId, details.documentId);
   } else if (url.origin === "https://gemini.google.com") {
-    if (!(run.confirmedDocumentId === details.documentId && run.targetAccountConfirmed)) {
+    if (run.stage !== "RELOADING_GEMINI"
+        && !(run.confirmedDocumentId === details.documentId && run.targetAccountConfirmed)) {
       updateRun(run, {
         stage: "GEMINI_DOCUMENT_LOADING",
         note: "Gemini loaded; waiting for exact account confirmation."
@@ -949,6 +981,24 @@ async function handleInternalMessage(message, sender) {
     if (results?.[0]?.documentId !== sender.documentId || results[0].result !== true) {
       return { ok: false, confirmed: false, complete: false };
     }
+    if (!run.geminiReloaded) {
+      updateRun(run, {
+        stage: "RELOADING_GEMINI",
+        geminiReloaded: true,
+        targetAccountConfirmed: false,
+        identityCheckComplete: false,
+        confirmedDocumentId: null,
+        note: "Reloading Gemini once before reveal."
+      });
+      await persistState();
+      try {
+        await chrome.tabs.reload(sender.tab.id);
+      } catch {
+        await failRun(run, "GEMINI_RELOAD_FAILED", "The final Gemini reload failed.");
+        return { ok: false, error: "GEMINI_RELOAD_FAILED", confirmed: false, complete: true };
+      }
+      return { ok: true, confirmed: false, complete: false, reloading: true };
+    }
     updateRun(run, {
       stage: "GEMINI_TARGET_ACCOUNT_CONFIRMED",
       targetAccountConfirmed: true,
@@ -956,6 +1006,21 @@ async function handleInternalMessage(message, sender) {
       confirmedDocumentId: sender.documentId,
       note: "Gemini rendered the exact target account."
     });
+    if (Number.isInteger(run.coverTabId)) {
+      try {
+        await chrome.tabs.remove(run.coverTabId);
+      } catch {
+        await failRun(run, "COVER_TAB_CLEANUP_FAILED", "The temporary cover tab could not be closed safely.");
+        return { ok: false, error: "COVER_TAB_CLEANUP_FAILED", confirmed: false, complete: true };
+      }
+      run.coverTabId = null;
+    }
+    try {
+      await chrome.tabs.update(sender.tab.id, { active: true });
+    } catch {
+      await failRun(run, "GEMINI_ACTIVATION_FAILED", "The confirmed Gemini tab could not be activated safely.");
+      return { ok: false, error: "GEMINI_ACTIVATION_FAILED", confirmed: false, complete: true };
+    }
     await chrome.alarms.clear(authAlarmName(run.requestId)).catch(() => {});
     await persistState();
     chrome.windows.update(run.windowId, { state: "normal", focused: true }).catch(() => {});
@@ -978,7 +1043,7 @@ async function handleTabRemoved(tabId) {
   const requestId = tabToRequest.get(tabId);
   if (!requestId) return;
   const run = getRun(requestId);
-  if (run) {
+  if (run && !run.closed) {
     updateRun(run, { closed: true, stage: "TAB_CLOSED" });
     await chrome.alarms.clear(authAlarmName(run.requestId)).catch(() => {});
   }

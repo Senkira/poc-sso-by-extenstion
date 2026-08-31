@@ -8,7 +8,10 @@ const listeners = {};
 const createdWindows = [];
 const updatedWindows = [];
 const removedWindows = [];
+const createdTabs = [];
 const updatedTabs = [];
+const reloadedTabs = [];
+const removedTabs = [];
 const nativeMessages = [];
 const createdAlarms = [];
 const clearedAlarms = [];
@@ -31,7 +34,7 @@ const chrome = {
     isAllowedIncognitoAccess(callback) { callback(true); }
   },
   runtime: {
-    getManifest() { return { version: "0.10.0" }; },
+    getManifest() { return { version: "0.11.0" }; },
     async sendNativeMessage(host, message) {
       nativeMessages.push({ host, message });
       assert.equal(message.version, 9);
@@ -83,6 +86,10 @@ const chrome = {
     onCommitted: event("committed")
   },
   tabs: {
+    async create(options) {
+      createdTabs.push(options);
+      return { id: 82 + createdTabs.length - 1, incognito: true, ...options };
+    },
     async update(id, options) {
       updatedTabs.push({ id, options });
       if (failNextTabUpdate) {
@@ -91,6 +98,8 @@ const chrome = {
       }
       return { id, incognito: true, ...options };
     },
+    async reload(id) { reloadedTabs.push(id); },
+    async remove(id) { removedTabs.push(id); },
     async get(id) { return { id, incognito: true, url: currentFrame.url }; },
     onRemoved: event("removed")
   }
@@ -141,7 +150,7 @@ async function flush(rounds = 8) {
 
 async function main() {
   const ping = await external({ type: "PING", version: 9 });
-  assert.equal(ping.version, "0.10.0");
+  assert.equal(ping.version, "0.11.0");
   assert.equal(ping.protocolVersion, 9);
   assert.equal(ping.capability, "EXTENSION_AGENT_ONE_SHOT_BRIDGE");
   assert.equal(ping.incognitoAccessAllowed, true);
@@ -166,7 +175,12 @@ async function main() {
   assert.equal(createdWindows[0].focused, false);
   assert.equal(createdWindows[0].state, "minimized");
   assert.equal(createdWindows[0].url, "about:blank");
+  assert.equal(createdTabs.length, 1);
+  assert.equal(createdTabs[0].windowId, 71);
+  assert.equal(createdTabs[0].url, "https://poc-after-sso-login-gemini.web.app/loading.html");
+  assert.equal(createdTabs[0].active, true);
   assert.match(updatedTabs[0].options.url, /accounts\.google\.com/);
+  assert.equal(updatedTabs[0].options.active, false);
   assert.equal(sessionStorageWrites > 0, true);
 
   const parallel = await external({
@@ -199,10 +213,10 @@ async function main() {
   assert.equal(nativeMessages[1].message.action, "getGoogleCredential");
   assert.equal(createdAlarms[0].name, `gemini-auth-timeout:${requestId}`);
 
-  currentFrame = { documentId: "gemini-doc", url: "https://gemini.google.com/app" };
+  currentFrame = { documentId: "gemini-doc-before-reload", url: "https://gemini.google.com/app" };
   listeners.committed({ frameId: 0, tabId: 81, documentId: currentFrame.documentId, url: currentFrame.url });
   await flush();
-  await internal(
+  const reloadSignal = await internal(
     { type: "GEMINI_DOCUMENT_SIGNAL", version: 9, targetAccountObserved: true, identityCheckComplete: true },
     {
       frameId: 0,
@@ -211,9 +225,34 @@ async function main() {
       tab: { id: 81, incognito: true }
     }
   );
+  assert.equal(reloadSignal.reloading, true);
+  status = await external({ type: "GET_STATUS", version: 9, requestId });
+  assert.equal(status.run.stage, "RELOADING_GEMINI");
+  assert.equal(status.run.targetAccountConfirmed, false);
+  assert.deepEqual(reloadedTabs, [81]);
+  assert.equal(updatedWindows.length, 0);
+  assert.equal(removedTabs.length, 0);
+
+  currentFrame = { documentId: "gemini-doc-after-reload", url: "https://gemini.google.com/app" };
+  listeners.committed({ frameId: 0, tabId: 81, documentId: currentFrame.documentId, url: currentFrame.url });
+  await flush();
+  const finalSignal = await internal(
+    { type: "GEMINI_DOCUMENT_SIGNAL", version: 9, targetAccountObserved: true, identityCheckComplete: true },
+    {
+      frameId: 0,
+      documentId: currentFrame.documentId,
+      url: currentFrame.url,
+      tab: { id: 81, incognito: true }
+    }
+  );
+  assert.equal(finalSignal.confirmed, true);
   status = await external({ type: "GET_STATUS", version: 9, requestId });
   assert.equal(status.run.stage, "GEMINI_TARGET_ACCOUNT_CONFIRMED");
   assert.equal(status.run.targetAccountConfirmed, true);
+  assert.equal(status.run.coverTabId, null);
+  assert.deepEqual(removedTabs, [82]);
+  assert.equal(updatedTabs.at(-1).id, 81);
+  assert.equal(updatedTabs.at(-1).options.active, true);
   assert.equal(updatedWindows[0].id, 71);
   assert.equal(updatedWindows[0].options.state, "normal");
   assert.equal(updatedWindows[0].options.focused, true);
@@ -291,6 +330,10 @@ async function main() {
   const timedOut = await external({ type: "GET_STATUS", version: 9, requestId: timeoutId });
   assert.equal(timedOut.run.stage, "AUTH_TIMEOUT");
   assert.equal(timedOut.run.closed, true);
+  listeners.removed(81);
+  await flush();
+  const timedOutAfterTabClose = await external({ type: "GET_STATUS", version: 9, requestId: timeoutId });
+  assert.equal(timedOutAfterTabClose.run.stage, "AUTH_TIMEOUT");
 
   const recoveryId = "123e4567-e89b-42d3-a456-426614174004";
   const recoveryStarted = await external({ type: "START_AGENT", version: 9, requestId: recoveryId, pocIdToken });
@@ -344,6 +387,8 @@ async function main() {
   console.log("PASS partial-window-open-failure-cleans-up-and-releases-run");
   console.log("PASS concurrent-start-agent-is-serialized");
   console.log("PASS prompt-success-requires-rendered-user-turn-postcondition");
+  console.log("PASS cover-tab-reload-and-single-gemini-handoff");
+  console.log("PASS terminal-failure-stage-survives-tab-close");
 }
 
 main().catch((error) => {

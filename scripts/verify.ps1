@@ -7,6 +7,7 @@ $worker = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'extension\servi
 $content = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'extension\content-script.js')
 $app = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'public\app.js')
 $html = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'public\index.html')
+$loadingHtml = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'public\loading.html')
 $nativeHost = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'bootstrap\NativeHost.cs')
 $firebase = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'firebase.json') | ConvertFrom-Json
 $expectedExtensionId = 'jeenmgigpkffleijbmfciffiodlcdafh'
@@ -14,7 +15,7 @@ $archiveName = "gemini-extension-agent-poc-v$($manifest.version).zip"
 $archivePath = Join-Path $projectRoot "public\downloads\$archiveName"
 
 if ($manifest.manifest_version -ne 3) { throw 'Manifest V3 is required.' }
-if ($manifest.version -ne '0.10.0') { throw 'Unexpected extension version.' }
+if ($manifest.version -ne '0.11.0') { throw 'Unexpected extension version.' }
 if ($manifest.incognito -ne 'spanning') { throw 'Spanning InPrivate execution is required.' }
 if ($manifest.permissions -notcontains 'nativeMessaging') { throw 'Native Messaging is required for the one-shot credential bridge.' }
 if ($manifest.permissions -notcontains 'storage') { throw 'Session-only state persistence is required for MV3 worker restarts.' }
@@ -51,10 +52,12 @@ if ($firebase.hosting.site -ne 'poc-after-sso-login-gemini') { throw 'Wrong Fire
 if ($firebase.auth.providers.emailPassword -ne $true) { throw 'Firebase Email/Password authentication is not configured.' }
 if (($firebase.hosting.headers | ConvertTo-Json -Depth 20) -match 'identitytoolkit\.googleapis\.com') { throw 'Hosted page must not connect directly to Firebase password authentication.' }
 if ($firebase.hosting.PSObject.Properties.Name -contains 'functions') { throw 'Firebase Functions are outside this static POC.' }
-if ($html -notmatch '/app.js\?v=0\.10\.4' -or $html -notmatch '/styles.css\?v=0\.10\.4') { throw 'Hosted assets are not cache-busted.' }
+if ($html -notmatch '/app.js\?v=0\.11\.0' -or $html -notmatch '/styles.css\?v=0\.11\.0') { throw 'Hosted assets are not cache-busted.' }
 if ($worker -notmatch 'documentIds' -or $worker -notmatch 'webNavigation\.getFrame') { throw 'Exact-document reconciliation is missing.' }
 if ($worker -notmatch 'windows\.getAll' -or $worker -notmatch 'INCOGNITO_SESSION_NOT_FRESH') { throw 'Fresh InPrivate session gate is missing.' }
 if ($worker -notmatch 'credentialState' -or $worker -notmatch 'CREDENTIAL_ALREADY_CLAIMED') { throw 'Atomic one-shot credential state is missing.' }
+if ($worker -notmatch 'COVER_URL' -or $worker -notmatch 'tabs\.reload' -or $worker -notmatch 'tabs\.remove') { throw 'Cover/reload/single-tab handoff is missing.' }
+if ($loadingHtml -notmatch 'Opening Gemini' -or $loadingHtml -match '<script') { throw 'Static cover page is invalid.' }
 if ($worker -notmatch 'startAgentTail' -or $worker -notmatch 'startAgentUnlocked') { throw 'Concurrent agent starts are not serialized.' }
 if ($worker -notmatch 'PROMPT_POSTCONDITION_NOT_OBSERVED' -or $worker -notmatch 'EXACT_USER_TURN_OBSERVED') { throw 'Gemini prompt postcondition is missing.' }
 if (-not (Test-Path -LiteralPath (Join-Path $projectRoot 'reference-agent\BrowserWorkerPool.cs'))) { throw 'Copied Agent reference is missing.' }
