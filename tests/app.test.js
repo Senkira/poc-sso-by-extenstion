@@ -44,8 +44,8 @@ const chrome = {
       if (message.type === "PING") {
         callback({
           ok: true,
-          version: "0.8.0",
-          protocolVersion: 8,
+          version: "0.9.0",
+          protocolVersion: 9,
           capability: "EXTENSION_AGENT_ONE_SHOT_BRIDGE",
           incognitoAccessAllowed: true
         });
@@ -85,6 +85,10 @@ const chrome = {
             closed: false
           }
         });
+        return;
+      }
+      if (message.type === "CANCEL_RUN") {
+        callback({ ok: true, cancelled: true });
         return;
       }
       callback({ ok: false, error: "UNEXPECTED_MESSAGE" });
@@ -141,6 +145,8 @@ async function main() {
   assert.equal(elements.get("#prompt").value, "");
 
   elements.get("#logout-button").listeners.click();
+  await flush();
+  assert.equal(messages.some((message) => message.type === "CANCEL_RUN"), true);
   assert.equal(stored.has("poc-firebase-id-token"), false);
   assert.equal(elements.get("#login-panel").hidden, false);
   assert.equal(elements.get("#launcher-panel").hidden, true);
@@ -150,6 +156,7 @@ async function main() {
   console.log("PASS hosted-page-has-no-password-field");
   console.log("PASS single-login-click-starts-gemini-agent");
   console.log("PASS poc-logout-clears-session-token");
+  console.log("PASS poc-logout-cancels-owned-window");
 }
 
 main().catch((error) => {

@@ -1,8 +1,8 @@
 "use strict";
 
 const EXTENSION_ID = "jeenmgigpkffleijbmfciffiodlcdafh";
-const REQUIRED_EXTENSION_VERSION = "0.8.0";
-const PROTOCOL_VERSION = 8;
+const REQUIRED_EXTENSION_VERSION = "0.9.0";
+const PROTOCOL_VERSION = 9;
 const CAPABILITY = "EXTENSION_AGENT_ONE_SHOT_BRIDGE";
 const POC_USERNAME = "O1234567";
 const AUTH_TOKEN_KEY = "poc-firebase-id-token";
@@ -17,10 +17,17 @@ const TERMINAL_STAGES = new Set([
   "CREDENTIAL_BRIDGE_FAILED",
   "PASSWORD_FORM_UNAVAILABLE",
   "STALE_PASSWORD_DOCUMENT",
+  "CREDENTIAL_ALREADY_CLAIMED",
+  "DOCUMENT_ID_UNAVAILABLE",
   "GOOGLE_PAGE_UNRECOGNIZED",
   "AUTH_TIMEOUT",
+  "ISOLATION_LOST",
+  "FRAME_UNAVAILABLE",
+  "FRAME_RECONCILIATION_FAILED",
+  "GEMINI_CONTEXT_CHANGED",
   "OPEN_FAILED",
-  "TAB_CLOSED"
+  "TAB_CLOSED",
+  "CANCELLED"
 ]);
 
 const elements = {
@@ -140,9 +147,19 @@ async function handleLogin(event) {
   }
 }
 
-function handleLogout() {
+async function handleLogout() {
   if (activeRun && activeRun.timerId !== null) clearTimeout(activeRun.timerId);
+  const run = activeRun;
+  const pocIdToken = authState?.idToken || null;
   activeRun = null;
+  if (run && pocIdToken) {
+    await sendToExtension({
+      type: "CANCEL_RUN",
+      version: PROTOCOL_VERSION,
+      requestId: run.requestId,
+      pocIdToken
+    }).catch(() => null);
+  }
   clearPocSession();
   showAuthenticatedState();
 }
@@ -299,7 +316,7 @@ async function submitPrompt() {
 }
 
 elements.loginForm.addEventListener("submit", (event) => { void handleLogin(event); });
-elements.logoutButton.addEventListener("click", handleLogout);
+elements.logoutButton.addEventListener("click", () => { void handleLogout(); });
 elements.launchButton.addEventListener("click", () => { void launchGemini(); });
 elements.retryButton.addEventListener("click", () => { void checkExtension(); });
 elements.promptButton.addEventListener("click", () => { void submitPrompt(); });

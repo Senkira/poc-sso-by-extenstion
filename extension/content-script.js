@@ -1,29 +1,20 @@
 "use strict";
 
 const TARGET_EMAIL = "codeassist.04@easybuy.co.th";
-const MAX_IDENTITY_ATTEMPTS = 20;
+const MAX_IDENTITY_ATTEMPTS = 40;
 
 function targetAccountIsVisible() {
   const normalized = TARGET_EMAIL.toLowerCase();
-  const machineReadableMatch = Array.from(document.querySelectorAll("[data-email],[data-identifier]")).some((node) => {
-    const declared = node.getAttribute("data-email") || node.getAttribute("data-identifier") || "";
-    return declared.trim().toLowerCase() === normalized;
-  });
-  if (machineReadableMatch) {
-    return true;
-  }
-
   const accountControls = document.querySelectorAll([
     "a[href*='accounts.google.com/SignOutOptions'][aria-label]",
-    "a[href*='accounts.google.com/AccountChooser'][aria-label]",
     "button[data-ogsr-up][aria-label]",
     "[role='button'][data-ogsr-up][aria-label]"
   ].join(","));
-  return Array.from(accountControls).some((node) => {
-    const label = node.getAttribute("aria-label") || "";
-    const emailTokens = label.match(/[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+/gi) || [];
-    return emailTokens.some((email) => email.toLowerCase() === normalized);
-  });
+  if (accountControls.length !== 1) return false;
+  const label = accountControls[0].getAttribute("aria-label") || "";
+  const emailTokens = [...new Set((label.match(/[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+/gi) || [])
+    .map((email) => email.toLowerCase()))];
+  return emailTokens.length === 1 && emailTokens[0] === normalized;
 }
 
 async function reportGeminiDocument(attempt = 0) {
@@ -32,7 +23,7 @@ async function reportGeminiDocument(attempt = 0) {
   try {
     const response = await chrome.runtime.sendMessage({
       type: "GEMINI_DOCUMENT_SIGNAL",
-      version: 8,
+      version: 9,
       origin: location.origin,
       readyState: document.readyState,
       targetAccountObserved,

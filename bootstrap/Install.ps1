@@ -1,8 +1,6 @@
 [CmdletBinding()]
 param(
-  [string]$InstallDirectory = (Join-Path $env:LOCALAPPDATA 'GeminiExtensionAgentPoc'),
-  [string]$GoogleCredentialTarget = 'ESB.GeminiBroker.CodeAssist04',
-  [string]$PocCredentialTarget = 'ESB.GeminiBroker.Poc.O1234567'
+  [string]$InstallDirectory = (Join-Path $env:LOCALAPPDATA 'GeminiExtensionAgentPoc')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -14,12 +12,13 @@ $hostPath = Join-Path $InstallDirectory 'GeminiCredentialHost.exe'
 $buildPath = Join-Path $InstallDirectory 'GeminiCredentialHost.new.exe'
 $manifestPath = Join-Path $InstallDirectory "$hostName.json"
 $compilerTemp = Join-Path $InstallDirectory 'temp'
+$credentialTargets = @('ESB.GeminiBroker.CodeAssist04', 'ESB.GeminiBroker.Poc.O1234567')
 
 if (-not (Test-Path -LiteralPath $sourcePath)) {
   throw 'NativeHost.cs is missing.'
 }
 $credentialList = cmdkey.exe /list 2>$null | Out-String
-foreach ($credentialTarget in @($GoogleCredentialTarget, $PocCredentialTarget)) {
+foreach ($credentialTarget in $credentialTargets) {
   if ($credentialList -notmatch [regex]::Escape($credentialTarget)) {
     throw "Windows Credential Manager target '$credentialTarget' is missing."
   }

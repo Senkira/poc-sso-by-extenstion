@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
+using System.Net;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Web.Script.Serialization;
@@ -10,6 +11,12 @@ internal static class Program
 {
     private const string GoogleCredentialTarget = "ESB.GeminiBroker.CodeAssist04";
     private const string PocCredentialTarget = "ESB.GeminiBroker.Poc.O1234567";
+    private const string ExpectedCallerOrigin = "chrome-extension://jeenmgigpkffleijbmfciffiodlcdafh/";
+    private const string FirebaseApiKey = "AIzaSyBAmRwEIELh_AA7E1omzf8TrVV3Cp4HPFc";
+    private const string PocAuthEmail = "o1234567@poc.invalid";
+    private const string PocUsername = "O1234567";
+    private const string PocFirebaseUid = "VHX1QkrsewSrrWB0g3BjyHepdWX2";
+    private const int ProtocolVersion = 9;
     private const int MaximumMessageBytes = 65536;
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -40,6 +47,13 @@ internal static class Program
     {
         try
         {
+            string[] commandLine = Environment.GetCommandLineArgs();
+            if (commandLine.Length < 2
+                || !String.Equals(commandLine[1], ExpectedCallerOrigin, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("Invalid native caller.");
+            }
+
             using (Stream input = Console.OpenStandardInput())
             using (Stream output = Console.OpenStandardOutput())
             {
@@ -58,42 +72,55 @@ internal static class Program
                 Dictionary<string, object> request = serializer.Deserialize<Dictionary<string, object>>(message);
                 object actionValue;
                 object requestIdValue;
+                object versionValue;
                 string action = request != null && request.TryGetValue("action", out actionValue) ? actionValue as string : null;
                 string requestId = request != null && request.TryGetValue("requestId", out requestIdValue) ? requestIdValue as string : null;
+                int version = request != null && request.TryGetValue("version", out versionValue)
+                    ? Convert.ToInt32(versionValue)
+                    : 0;
                 Guid parsedRequestId;
-                if (!Guid.TryParse(requestId, out parsedRequestId))
+                if (request == null
+                    || request.Count != 3
+                    || version != ProtocolVersion
+                    || !Guid.TryParse(requestId, out parsedRequestId))
                 {
                     throw new InvalidOperationException("Invalid native message request.");
                 }
 
-                string credentialTarget;
-                string identityField;
+                Dictionary<string, object> responsePayload;
                 if (String.Equals(action, "getGoogleCredential", StringComparison.Ordinal))
                 {
-                    credentialTarget = GoogleCredentialTarget;
-                    identityField = "email";
+                    Dictionary<string, object> authorization = AuthenticatePoc(serializer);
+                    authorization["idToken"] = null;
+                    string[] credential = ReadCredential(GoogleCredentialTarget);
+                    responsePayload = new Dictionary<string, object>
+                    {
+                        { "ok", true },
+                        { "email", credential[0] },
+                        { "password", credential[1] }
+                    };
+                    credential[0] = null;
+                    credential[1] = null;
                 }
-                else if (String.Equals(action, "getPocCredential", StringComparison.Ordinal))
+                else if (String.Equals(action, "authenticatePoc", StringComparison.Ordinal))
                 {
-                    credentialTarget = PocCredentialTarget;
-                    identityField = "username";
+                    Dictionary<string, object> authorization = AuthenticatePoc(serializer);
+                    responsePayload = new Dictionary<string, object>
+                    {
+                        { "ok", true },
+                        { "username", PocUsername },
+                        { "idToken", authorization["idToken"] },
+                        { "expiresIn", authorization["expiresIn"] }
+                    };
+                    authorization["idToken"] = null;
                 }
                 else
                 {
                     throw new InvalidOperationException("Invalid native message request.");
                 }
 
-                string[] credential = ReadCredential(credentialTarget);
-                Dictionary<string, object> responsePayload = new Dictionary<string, object>
-                {
-                    { "ok", true },
-                    { "password", credential[1] }
-                };
-                responsePayload.Add(identityField, credential[0]);
                 string response = serializer.Serialize(responsePayload);
                 WriteMessage(output, response);
-                credential[0] = null;
-                credential[1] = null;
                 return 0;
             }
         }
@@ -117,6 +144,88 @@ internal static class Program
                 // Native host must never write diagnostics or credentials to stdout/stderr.
             }
             return 2;
+        }
+    }
+
+    private static Dictionary<string, object> AuthenticatePoc(JavaScriptSerializer serializer)
+    {
+        string[] credential = ReadCredential(PocCredentialTarget);
+        try
+        {
+            if (!String.Equals(credential[0], PocUsername, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("POC credential identity mismatch.");
+            }
+
+            string requestJson = serializer.Serialize(new Dictionary<string, object>
+            {
+                { "email", PocAuthEmail },
+                { "password", credential[1] },
+                { "returnSecureToken", true }
+            });
+            credential[1] = null;
+            byte[] requestBytes = Encoding.UTF8.GetBytes(requestJson);
+            requestJson = null;
+            try
+            {
+                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(
+                    "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=" + FirebaseApiKey);
+                request.Method = "POST";
+                request.ContentType = "application/json";
+                request.ContentLength = requestBytes.Length;
+                request.Timeout = 15000;
+                request.ReadWriteTimeout = 15000;
+                using (Stream requestStream = request.GetRequestStream())
+                {
+                    requestStream.Write(requestBytes, 0, requestBytes.Length);
+                }
+
+                string responseJson;
+                using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+                using (StreamReader reader = new StreamReader(response.GetResponseStream(), Encoding.UTF8))
+                {
+                    responseJson = reader.ReadToEnd();
+                }
+                Dictionary<string, object> responsePayload =
+                    serializer.Deserialize<Dictionary<string, object>>(responseJson);
+                responseJson = null;
+                object emailValue;
+                object localIdValue;
+                object idTokenValue;
+                object expiresInValue;
+                string email = responsePayload != null && responsePayload.TryGetValue("email", out emailValue)
+                    ? emailValue as string
+                    : null;
+                string localId = responsePayload != null && responsePayload.TryGetValue("localId", out localIdValue)
+                    ? localIdValue as string
+                    : null;
+                string idToken = responsePayload != null && responsePayload.TryGetValue("idToken", out idTokenValue)
+                    ? idTokenValue as string
+                    : null;
+                object expiresIn = responsePayload != null && responsePayload.TryGetValue("expiresIn", out expiresInValue)
+                    ? expiresInValue
+                    : "3600";
+                if (!String.Equals(email, PocAuthEmail, StringComparison.OrdinalIgnoreCase)
+                    || !String.Equals(localId, PocFirebaseUid, StringComparison.Ordinal)
+                    || String.IsNullOrWhiteSpace(idToken))
+                {
+                    throw new InvalidOperationException("Firebase POC identity mismatch.");
+                }
+                return new Dictionary<string, object>
+                {
+                    { "idToken", idToken },
+                    { "expiresIn", expiresIn }
+                };
+            }
+            finally
+            {
+                Array.Clear(requestBytes, 0, requestBytes.Length);
+            }
+        }
+        finally
+        {
+            credential[0] = null;
+            credential[1] = null;
         }
     }
 

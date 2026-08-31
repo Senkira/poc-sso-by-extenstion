@@ -8,6 +8,7 @@ const listeners = {};
 const createdWindows = [];
 const updatedWindows = [];
 const removedWindows = [];
+const updatedTabs = [];
 const nativeMessages = [];
 const createdAlarms = [];
 const clearedAlarms = [];
@@ -15,6 +16,8 @@ let googleStep = "PASSWORD_REQUIRED";
 const pocIdToken = "test-id-token".padEnd(120, "x");
 const sessionState = {};
 let sessionStorageWrites = 0;
+let currentFrame = { documentId: "about-doc", url: "about:blank" };
+let existingWindows = [];
 
 const event = (name) => ({ addListener(listener) { listeners[name] = listener; } });
 const chrome = {
@@ -27,11 +30,12 @@ const chrome = {
     isAllowedIncognitoAccess(callback) { callback(true); }
   },
   runtime: {
-    getManifest() { return { version: "0.8.0" }; },
+    getManifest() { return { version: "0.9.0" }; },
     async sendNativeMessage(host, message) {
       nativeMessages.push({ host, message });
-      if (message.action === "getPocCredential") {
-        return { ok: true, username: "O1234567", password: "test-poc-password" };
+      assert.equal(message.version, 9);
+      if (message.action === "authenticatePoc") {
+        return { ok: true, username: "O1234567", idToken: pocIdToken, expiresIn: "3600" };
       }
       return { ok: true, email: "codeassist.04@easybuy.co.th", password: "test-only-password" };
     },
@@ -45,6 +49,7 @@ const chrome = {
     }
   },
   windows: {
+    async getAll() { return existingWindows; },
     async create(options) {
       createdWindows.push(options);
       return { id: 71, tabs: [{ id: 81 }] };
@@ -54,21 +59,33 @@ const chrome = {
   },
   scripting: {
     async executeScript(options) {
-      if (options.func.name === "inspectGooglePage") return [{ result: { step: googleStep } }];
+      const documentId = options.target.documentIds?.[0] || currentFrame.documentId;
+      if (options.func.name === "inspectGooglePage") return [{ documentId, result: { step: googleStep } }];
       if (options.func.name === "submitPassword") {
         assert.equal(options.args[0], "codeassist.04@easybuy.co.th");
         assert.equal(options.args[1], "test-only-password");
-        return [{ result: { step: "PASSWORD_SUBMITTED" } }];
+        assert.match(options.args[2], /challenge\/pwd/);
+        return [{ documentId, result: { step: "PASSWORD_SUBMITTED" } }];
       }
-      if (options.func.name === "injectPrompt") return [{ result: { ok: true } }];
+      if (options.func.name === "inspectGeminiActiveAccount") return [{ documentId, result: true }];
+      if (options.func.name === "injectPrompt") {
+        assert.equal(options.args[0], "codeassist.04@easybuy.co.th");
+        return [{ documentId, result: { ok: true } }];
+      }
+      if (options.func.name === "clearPasswordInput") return [{ documentId, result: true }];
       throw new Error(`Unexpected script: ${options.func.name}`);
     }
   },
   webNavigation: {
+    async getFrame() { return { ...currentFrame }; },
     onCompleted: event("completed"),
     onCommitted: event("committed")
   },
-  tabs: { onRemoved: event("removed") }
+  tabs: {
+    async update(id, options) { updatedTabs.push({ id, options }); return { id, incognito: true, ...options }; },
+    async get(id) { return { id, incognito: true, url: currentFrame.url }; },
+    onRemoved: event("removed")
+  }
 };
 
 const context = {
@@ -82,32 +99,17 @@ const context = {
   Error,
   encodeURIComponent,
   async fetch(url, options) {
-    if (/accounts:signInWithPassword/.test(url)) {
-      const body = JSON.parse(options.body);
-      assert.equal(body.email, "o1234567@poc.invalid");
-      assert.equal(body.password, "test-poc-password");
-      return {
-        ok: true,
-        async json() {
-          return {
-            idToken: pocIdToken,
-            refreshToken: "discard-me",
-            email: "o1234567@poc.invalid",
-            expiresIn: "3600"
-          };
-        }
-      };
-    }
     assert.match(url, /identitytoolkit\.googleapis\.com\/v1\/accounts:lookup/);
     assert.equal(JSON.parse(options.body).idToken, pocIdToken);
     return {
       ok: true,
       async json() {
-        return { users: [{ localId: "poc-user-1", email: "o1234567@poc.invalid" }] };
+        return { users: [{ localId: "VHX1QkrsewSrrWB0g3BjyHepdWX2", email: "o1234567@poc.invalid" }] };
       }
     };
   },
-  setTimeout(callback) { Promise.resolve().then(callback); return 1; }
+  setTimeout(callback, delayMs) { if (delayMs <= 1000) Promise.resolve().then(callback); return 1; },
+  clearTimeout() {}
 };
 const workerSource = fs.readFileSync("extension/service-worker.js", "utf8");
 function loadWorker() {
@@ -130,42 +132,57 @@ async function flush(rounds = 8) {
 }
 
 async function main() {
-  const ping = await external({ type: "PING", version: 8 });
-  assert.equal(ping.version, "0.8.0");
-  assert.equal(ping.protocolVersion, 8);
+  const ping = await external({ type: "PING", version: 9 });
+  assert.equal(ping.version, "0.9.0");
+  assert.equal(ping.protocolVersion, 9);
   assert.equal(ping.capability, "EXTENSION_AGENT_ONE_SHOT_BRIDGE");
   assert.equal(ping.incognitoAccessAllowed, true);
 
   const requestId = "123e4567-e89b-42d3-a456-426614174000";
   const pocLogin = await external({
-    type: "AUTHENTICATE_POC", version: 8, requestId, username: "O1234567"
+    type: "AUTHENTICATE_POC", version: 9, requestId, username: "O1234567"
   });
   assert.equal(pocLogin.ok, true);
   assert.equal(pocLogin.idToken, pocIdToken);
   assert.equal(Object.prototype.hasOwnProperty.call(pocLogin, "password"), false);
-  assert.equal(nativeMessages[0].message.action, "getPocCredential");
+  assert.equal(nativeMessages[0].message.action, "authenticatePoc");
 
-  const denied = await external({ type: "START_AGENT", version: 8, requestId });
+  const denied = await external({ type: "START_AGENT", version: 9, requestId });
   assert.equal(denied.error, "POC_AUTH_REQUIRED");
   assert.equal(createdWindows.length, 0);
 
-  const started = await external({ type: "START_AGENT", version: 8, requestId, pocIdToken });
+  const started = await external({ type: "START_AGENT", version: 9, requestId, pocIdToken });
   assert.equal(started.ok, true);
   assert.equal(createdWindows.length, 1);
   assert.equal(createdWindows[0].incognito, true);
   assert.equal(createdWindows[0].focused, false);
   assert.equal(createdWindows[0].state, "minimized");
+  assert.equal(createdWindows[0].url, "about:blank");
+  assert.match(updatedTabs[0].options.url, /accounts\.google\.com/);
   assert.equal(sessionStorageWrites > 0, true);
+
+  const parallel = await external({
+    type: "START_AGENT",
+    version: 9,
+    requestId: "123e4567-e89b-42d3-a456-426614174099",
+    pocIdToken
+  });
+  assert.equal(parallel.error, "RUN_ALREADY_ACTIVE");
 
   loadWorker();
 
+  currentFrame = {
+    documentId: "google-password-doc",
+    url: "https://accounts.google.com/v3/signin/challenge/pwd"
+  };
   listeners.completed({
     frameId: 0,
     tabId: 81,
-    url: "https://accounts.google.com/v3/signin/challenge/pwd"
+    documentId: currentFrame.documentId,
+    url: currentFrame.url
   });
   await flush();
-  let status = await external({ type: "GET_STATUS", version: 8, requestId });
+  let status = await external({ type: "GET_STATUS", version: 9, requestId });
   assert.equal(status.run.stage, "PASSWORD_SUBMITTED");
   assert.equal(status.run.credentialDelivered, true);
   assert.equal(Object.prototype.hasOwnProperty.call(status.run, "password"), false);
@@ -174,12 +191,19 @@ async function main() {
   assert.equal(nativeMessages[1].message.action, "getGoogleCredential");
   assert.equal(createdAlarms[0].name, `gemini-auth-timeout:${requestId}`);
 
-  listeners.committed({ frameId: 0, tabId: 81, url: "https://gemini.google.com/app" });
+  currentFrame = { documentId: "gemini-doc", url: "https://gemini.google.com/app" };
+  listeners.committed({ frameId: 0, tabId: 81, documentId: currentFrame.documentId, url: currentFrame.url });
+  await flush();
   await internal(
-    { type: "GEMINI_DOCUMENT_SIGNAL", version: 8, targetAccountObserved: true, identityCheckComplete: true },
-    { frameId: 0, url: "https://gemini.google.com/app", tab: { id: 81, incognito: true } }
+    { type: "GEMINI_DOCUMENT_SIGNAL", version: 9, targetAccountObserved: true, identityCheckComplete: true },
+    {
+      frameId: 0,
+      documentId: currentFrame.documentId,
+      url: currentFrame.url,
+      tab: { id: 81, incognito: true }
+    }
   );
-  status = await external({ type: "GET_STATUS", version: 8, requestId });
+  status = await external({ type: "GET_STATUS", version: 9, requestId });
   assert.equal(status.run.stage, "GEMINI_TARGET_ACCOUNT_CONFIRMED");
   assert.equal(status.run.targetAccountConfirmed, true);
   assert.equal(updatedWindows[0].id, 71);
@@ -188,13 +212,19 @@ async function main() {
   assert.equal(clearedAlarms.includes(`gemini-auth-timeout:${requestId}`), true);
 
   const posted = await external({
-    type: "POST_PROMPT", version: 8, requestId, pocIdToken, prompt: "POC test"
+    type: "POST_PROMPT", version: 9, requestId, pocIdToken, prompt: "POC test"
   });
   assert.equal(posted.ok, true);
   assert.equal(posted.run.stage, "PROMPT_SUBMITTED");
 
+  const cancelled = await external({
+    type: "CANCEL_RUN", version: 9, requestId, pocIdToken
+  });
+  assert.equal(cancelled.ok, true);
+  assert.equal(cancelled.run.stage, "CANCELLED");
+
   const rejected = await external(
-    { type: "PING", version: 8 },
+    { type: "PING", version: 9 },
     { frameId: 0, url: "https://example.com/" }
   );
   assert.equal(rejected.error, "UNTRUSTED_SENDER");
@@ -206,23 +236,61 @@ async function main() {
 
   googleStep = "USER_ACTION_REQUIRED";
   const challengeId = "123e4567-e89b-42d3-a456-426614174001";
-  await external({ type: "START_AGENT", version: 8, requestId: challengeId, pocIdToken });
-  listeners.completed({ frameId: 0, tabId: 81, url: "https://accounts.google.com/v3/signin/challenge/otp" });
+  const challengeStarted = await external({ type: "START_AGENT", version: 9, requestId: challengeId, pocIdToken });
+  assert.equal(challengeStarted.ok, true);
+  currentFrame = { documentId: "google-otp-doc", url: "https://accounts.google.com/v3/signin/challenge/otp" };
+  listeners.completed({ frameId: 0, tabId: 81, documentId: currentFrame.documentId, url: currentFrame.url });
   await flush();
-  const challenged = await external({ type: "GET_STATUS", version: 8, requestId: challengeId });
+  const challenged = await external({ type: "GET_STATUS", version: 9, requestId: challengeId });
   assert.equal(challenged.run.stage, "USER_ACTION_REQUIRED");
   assert.equal(removedWindows.includes(71), true);
 
   googleStep = "PASSWORD_REQUIRED";
   const timeoutId = "123e4567-e89b-42d3-a456-426614174002";
-  await external({ type: "START_AGENT", version: 8, requestId: timeoutId, pocIdToken });
-  listeners.completed({ frameId: 0, tabId: 81, url: "https://accounts.google.com/v3/signin/challenge/pwd" });
+  const timeoutStarted = await external({ type: "START_AGENT", version: 9, requestId: timeoutId, pocIdToken });
+  assert.equal(timeoutStarted.ok, true);
+  currentFrame = { documentId: "google-timeout-doc", url: "https://accounts.google.com/v3/signin/challenge/pwd" };
+  listeners.completed({ frameId: 0, tabId: 81, documentId: currentFrame.documentId, url: currentFrame.url });
   await flush();
   listeners.alarm({ name: `gemini-auth-timeout:${timeoutId}` });
   await flush();
-  const timedOut = await external({ type: "GET_STATUS", version: 8, requestId: timeoutId });
+  const timedOut = await external({ type: "GET_STATUS", version: 9, requestId: timeoutId });
   assert.equal(timedOut.run.stage, "AUTH_TIMEOUT");
   assert.equal(timedOut.run.closed, true);
+
+  const recoveryId = "123e4567-e89b-42d3-a456-426614174004";
+  const recoveryStarted = await external({ type: "START_AGENT", version: 9, requestId: recoveryId, pocIdToken });
+  assert.equal(recoveryStarted.ok, true);
+  currentFrame = { documentId: "missed-google-doc", url: "https://accounts.google.com/v3/signin/challenge/pwd" };
+  const recovered = await external({ type: "GET_STATUS", version: 9, requestId: recoveryId });
+  assert.equal(recovered.run.stage, "PASSWORD_SUBMITTED");
+  await external({ type: "CANCEL_RUN", version: 9, requestId: recoveryId, pocIdToken });
+
+  const atomicId = "123e4567-e89b-42d3-a456-426614174005";
+  const atomicStarted = await external({ type: "START_AGENT", version: 9, requestId: atomicId, pocIdToken });
+  assert.equal(atomicStarted.ok, true);
+  const atomicSaved = sessionState.geminiExtensionAgentV9.runs.find((run) => run.requestId === atomicId);
+  atomicSaved.credentialState = "REQUESTING";
+  atomicSaved.stage = "FETCHING_ONE_SHOT_CREDENTIAL";
+  atomicSaved.currentDocumentId = "atomic-google-doc";
+  atomicSaved.currentUrl = "https://accounts.google.com/v3/signin/challenge/pwd";
+  loadWorker();
+  currentFrame = { documentId: "atomic-google-doc", url: "https://accounts.google.com/v3/signin/challenge/pwd" };
+  const nativeCountBeforeAtomicRecovery = nativeMessages.length;
+  listeners.completed({ frameId: 0, tabId: 81, documentId: currentFrame.documentId, url: currentFrame.url });
+  await flush();
+  const atomicStatus = await external({ type: "GET_STATUS", version: 9, requestId: atomicId });
+  assert.equal(atomicStatus.run.stage, "CREDENTIAL_ALREADY_CLAIMED");
+  assert.equal(nativeMessages.length, nativeCountBeforeAtomicRecovery);
+
+  existingWindows = [{ id: 999, incognito: true }];
+  const notFresh = await external({
+    type: "START_AGENT",
+    version: 9,
+    requestId: "123e4567-e89b-42d3-a456-426614174003",
+    pocIdToken
+  });
+  assert.equal(notFresh.error, "INCOGNITO_SESSION_NOT_FRESH");
 
   console.log("PASS extension-agent-state-machine");
   console.log("PASS isolated-window-hidden-until-confirmed");
@@ -234,6 +302,11 @@ async function main() {
   console.log("PASS poc-password-never-enters-hosted-page");
   console.log("PASS mv3-worker-restart-restores-non-secret-run-state");
   console.log("PASS stalled-password-submit-fails-closed");
+  console.log("PASS initial-navigation-is-mapped-before-google");
+  console.log("PASS single-active-run-and-fresh-incognito-gates");
+  console.log("PASS exact-document-targeting-and-prompt-revalidation");
+  console.log("PASS missed-navigation-reconciles-from-current-frame");
+  console.log("PASS worker-restart-never-reclaims-credential");
 }
 
 main().catch((error) => {

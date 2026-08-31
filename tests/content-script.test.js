@@ -8,7 +8,7 @@ async function flush() {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
-async function runScenario({ readyState, initiallyVisible, unrelated = false }) {
+async function runScenario({ readyState, initiallyVisible, unrelated = false, multiple = false }) {
   let visible = initiallyVisible;
   let loadListener = null;
   const scheduled = [];
@@ -27,8 +27,8 @@ async function runScenario({ readyState, initiallyVisible, unrelated = false }) 
   const document = {
     readyState,
     querySelectorAll(selector) {
-      if (selector === "[data-email],[data-identifier]") return [];
-      return visible && !unrelated ? [accountNode] : [];
+      if (!visible || unrelated) return [];
+      return multiple ? [accountNode, accountNode] : [accountNode];
     }
   };
   const chrome = {
@@ -56,11 +56,11 @@ async function runScenario({ readyState, initiallyVisible, unrelated = false }) 
     loadListener({ type: "load" });
   }
   await flush();
-  assert.equal(messages[0].version, 8);
-  const initiallyObserved = initiallyVisible && !unrelated;
+  assert.equal(messages[0].version, 9);
+  const initiallyObserved = initiallyVisible && !unrelated && !multiple;
   assert.equal(messages[0].targetAccountObserved, initiallyObserved);
 
-  if (!initiallyObserved && !unrelated) {
+  if (!initiallyObserved && !unrelated && !multiple) {
     assert.equal(scheduled.length, 1);
     visible = true;
     scheduled.shift().callback();
@@ -81,9 +81,11 @@ async function main() {
   await runScenario({ readyState: "complete", initiallyVisible: false });
   await runScenario({ readyState: "interactive", initiallyVisible: true });
   await runScenario({ readyState: "complete", initiallyVisible: true, unrelated: true });
+  await runScenario({ readyState: "complete", initiallyVisible: true, multiple: true });
   console.log("PASS target-account-observation-retries");
   console.log("PASS unrelated-email-label-is-not-account-confirmation");
   console.log("PASS load-event-keeps-zero-attempt-index");
+  console.log("PASS multiple-account-controls-fail-closed");
 }
 
 main().catch((error) => {
