@@ -16,7 +16,7 @@ $archiveName = "gemini-extension-agent-poc-v$($manifest.version).zip"
 $archivePath = Join-Path $projectRoot "public\downloads\$archiveName"
 
 if ($manifest.manifest_version -ne 3) { throw 'Manifest V3 is required.' }
-if ($manifest.version -ne '0.13.1') { throw 'Unexpected extension version.' }
+if ($manifest.version -ne '0.13.2') { throw 'Unexpected extension version.' }
 if ($manifest.incognito -ne 'spanning') { throw 'Spanning InPrivate execution is required.' }
 if ($manifest.permissions -contains 'nativeMessaging') { throw 'Endpoint Native Messaging is forbidden.' }
 if ($manifest.permissions -notcontains 'storage' -or $manifest.permissions -notcontains 'alarms') { throw 'Session state and authentication alarms are required.' }
@@ -44,7 +44,7 @@ if ($firebase.functions.source -ne 'functions' -or $firebase.functions.runtime -
 if ($functionsPackage.engines.node -ne '22') { throw 'Backend Node runtime mismatch.' }
 if ($firebase.hosting.site -ne 'poc-after-sso-login-gemini') { throw 'Wrong Firebase Hosting site.' }
 if ($firebase.auth.providers.emailPassword -ne $true) { throw 'Firebase Email/Password provider configuration is missing.' }
-if ($html -notmatch '/app.js\?v=0\.13\.1' -or $html -notmatch '/styles.css\?v=0\.13\.1') { throw 'Hosted assets are not cache-busted.' }
+if ($html -notmatch '/app.js\?v=0\.13\.2' -or $html -notmatch '/styles.css\?v=0\.13\.2') { throw 'Hosted assets are not cache-busted.' }
 if ($worker -notmatch 'documentIds' -or $worker -notmatch 'webNavigation\.getFrame') { throw 'Exact-document reconciliation is missing.' }
 if ($worker -notmatch 'windows\.getAll' -or $worker -notmatch 'INCOGNITO_SESSION_NOT_FRESH') { throw 'Fresh InPrivate session gate is missing.' }
 if ($worker -notmatch 'credentialState' -or $worker -notmatch 'CREDENTIAL_ALREADY_CLAIMED') { throw 'Atomic one-shot credential state is missing.' }

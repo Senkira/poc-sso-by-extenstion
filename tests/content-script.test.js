@@ -8,7 +8,7 @@ async function flush() {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
-async function runScenario({ readyState, initiallyVisible, unrelated = false, multiple = false }) {
+async function runScenario({ readyState, initiallyVisible, unrelated = false, multiple = false, conflicting = false }) {
   let visible = initiallyVisible;
   let loadListener = null;
   const scheduled = [];
@@ -24,10 +24,17 @@ async function runScenario({ readyState, initiallyVisible, unrelated = false, mu
       return null;
     }
   };
+  const otherAccountNode = {
+    getAttribute(name) {
+      if (name === "aria-label" && visible) return "Google Account: other-user@example.com";
+      return null;
+    }
+  };
   const document = {
     readyState,
     querySelectorAll(selector) {
       if (!visible || unrelated) return [];
+      if (conflicting) return [accountNode, otherAccountNode];
       return multiple ? [accountNode, accountNode] : [accountNode];
     }
   };
@@ -57,10 +64,10 @@ async function runScenario({ readyState, initiallyVisible, unrelated = false, mu
   }
   await flush();
   assert.equal(messages[0].version, 10);
-  const initiallyObserved = initiallyVisible && !unrelated && !multiple;
+  const initiallyObserved = initiallyVisible && !unrelated && !conflicting;
   assert.equal(messages[0].targetAccountObserved, initiallyObserved);
 
-  if (!initiallyObserved && !unrelated && !multiple) {
+  if (!initiallyObserved && !unrelated && !multiple && !conflicting) {
     assert.equal(scheduled.length, 1);
     visible = true;
     scheduled.shift().callback();
@@ -82,10 +89,11 @@ async function main() {
   await runScenario({ readyState: "interactive", initiallyVisible: true });
   await runScenario({ readyState: "complete", initiallyVisible: true, unrelated: true });
   await runScenario({ readyState: "complete", initiallyVisible: true, multiple: true });
+  await runScenario({ readyState: "complete", initiallyVisible: true, conflicting: true });
   console.log("PASS target-account-observation-retries");
   console.log("PASS unrelated-email-label-is-not-account-confirmation");
   console.log("PASS load-event-keeps-zero-attempt-index");
-  console.log("PASS multiple-account-controls-fail-closed");
+  console.log("PASS duplicate-target-controls-pass-and-conflicting-account-controls-fail-closed");
 }
 
 main().catch((error) => {

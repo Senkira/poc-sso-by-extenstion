@@ -10,10 +10,10 @@ function targetAccountIsVisible() {
     "button[data-ogsr-up][aria-label]",
     "[role='button'][data-ogsr-up][aria-label]"
   ].join(","));
-  if (accountControls.length !== 1) return false;
-  const label = accountControls[0].getAttribute("aria-label") || "";
-  const emailTokens = [...new Set((label.match(/[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+/gi) || [])
-    .map((email) => email.toLowerCase()))];
+  const pattern = /[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+/gi;
+  const emailTokens = [...new Set(Array.from(accountControls).flatMap((control) =>
+    (control.getAttribute("aria-label") || "").match(pattern) || []
+  ).map((email) => email.toLowerCase()))];
   return emailTokens.length === 1 && emailTokens[0] === normalized;
 }
 

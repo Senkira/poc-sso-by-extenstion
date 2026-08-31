@@ -16,7 +16,7 @@ const AUTOMATION_RETRY_LIMIT = 60;
 const AUTOMATION_RETRY_MS = 500;
 const AUTH_TIMEOUT_MINUTES = 15;
 const BROKER_TIMEOUT_MS = 20000;
-const SCRIPT_TIMEOUT_MS = 5000;
+const SCRIPT_TIMEOUT_MS = 8000;
 const PROMPT_CONFIRM_TIMEOUT_MS = 15000;
 const runs = new Map();
 const tabToRequest = new Map();
@@ -436,14 +436,14 @@ function inspectGooglePage(targetEmail) {
   function exactSelectedAccount(email) {
     const normalizedEmail = email.toLowerCase();
     const controls = Array.from(document.querySelectorAll(
-      "[role='link'][jsname='af8ijd'][aria-label], [role='link'][data-profile-identifier]"
+      "[role='link'][jsname='af8ijd'][aria-label], [data-profile-identifier], [data-identifier], [data-email], [aria-label*='@']"
     ));
-    if (controls.length !== 1) return false;
-    const values = [
-      controls[0].getAttribute("aria-label"),
-      controls[0].getAttribute("data-profile-identifier"),
-      controls[0].getAttribute("data-identifier")
-    ].filter(Boolean);
+    const values = controls.flatMap((control) => [
+      control.getAttribute("aria-label"),
+      control.getAttribute("data-profile-identifier"),
+      control.getAttribute("data-identifier"),
+      control.getAttribute("data-email")
+    ]).filter(Boolean);
     const pattern = /[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+/gi;
     const emails = [...new Set(values.flatMap((value) => value.match(pattern) || [])
       .map((value) => value.toLowerCase()))];
@@ -492,14 +492,14 @@ async function submitPassword(targetEmail, password, expectedPath) {
   function exactSelectedAccount(email) {
     const normalizedEmail = email.toLowerCase();
     const controls = Array.from(document.querySelectorAll(
-      "[role='link'][jsname='af8ijd'][aria-label], [role='link'][data-profile-identifier]"
+      "[role='link'][jsname='af8ijd'][aria-label], [data-profile-identifier], [data-identifier], [data-email], [aria-label*='@']"
     ));
-    if (controls.length !== 1) return false;
-    const values = [
-      controls[0].getAttribute("aria-label"),
-      controls[0].getAttribute("data-profile-identifier"),
-      controls[0].getAttribute("data-identifier")
-    ].filter(Boolean);
+    const values = controls.flatMap((control) => [
+      control.getAttribute("aria-label"),
+      control.getAttribute("data-profile-identifier"),
+      control.getAttribute("data-identifier"),
+      control.getAttribute("data-email")
+    ]).filter(Boolean);
     const pattern = /[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+/gi;
     const emails = [...new Set(values.flatMap((value) => value.match(pattern) || [])
       .map((value) => value.toLowerCase()))];
@@ -511,54 +511,79 @@ async function submitPassword(targetEmail, password, expectedPath) {
   if (document.querySelector("iframe[src*='recaptcha'], input[autocomplete='one-time-code'], input[type='tel']")) {
     return { step: "USER_ACTION_REQUIRED" };
   }
+  for (let identityPoll = 0; identityPoll < 20 && !exactSelectedAccount(targetEmail); identityPoll += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    if (location.pathname !== expectedPath || !/\/challenge\/pwd(?:\/|$)/.test(location.pathname)) {
+      return { step: "STALE_PASSWORD_DOCUMENT" };
+    }
+    if (document.querySelector("iframe[src*='recaptcha'], input[autocomplete='one-time-code'], input[type='tel']")) {
+      return { step: "USER_ACTION_REQUIRED" };
+    }
+  }
   if (!exactSelectedAccount(targetEmail)) {
     return { step: "TARGET_ACCOUNT_NOT_CONFIRMED" };
   }
-  const input = document.querySelector("input[name='Passwd'], input[type='password']");
-  if (!input || typeof password !== "string" || password.length === 0) {
+  if (typeof password !== "string" || password.length === 0) {
     return { step: "PASSWORD_FORM_UNAVAILABLE" };
   }
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-  const applyPassword = () => {
-    input.focus();
-    if (setter) setter.call(input, password); else input.value = password;
-    try {
-      input.dispatchEvent(new InputEvent("beforeinput", {
-        bubbles: true,
-        cancelable: true,
-        data: password,
-        inputType: "insertText"
-      }));
-      input.dispatchEvent(new InputEvent("input", {
-        bubbles: true,
-        data: password,
-        inputType: "insertText"
-      }));
-    } catch {
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    }
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-  };
-
-  applyPassword();
-  for (let attempt = 0; attempt < 10; attempt += 1) {
+  let lastInput = null;
+  let stablePolls = 0;
+  let injectionAttempts = 0;
+  let identityMisses = 0;
+  for (let poll = 0; poll < 50; poll += 1) {
     await new Promise((resolve) => setTimeout(resolve, 100));
-    if (location.pathname !== expectedPath || !exactSelectedAccount(targetEmail)) {
+    if (location.pathname !== expectedPath) {
       return { step: "STALE_PASSWORD_DOCUMENT" };
     }
-    if (input.value !== password) {
-      applyPassword();
+    if (!exactSelectedAccount(targetEmail)) {
+      identityMisses += 1;
+      if (identityMisses >= 10) return { step: "TARGET_ACCOUNT_NOT_CONFIRMED" };
       continue;
     }
+    identityMisses = 0;
+    const input = document.querySelector("input[name='Passwd'], input[type='password']");
     const next = document.querySelector("#passwordNext button, #passwordNext");
+    if (!input || !next) {
+      lastInput = null;
+      stablePolls = 0;
+      continue;
+    }
+    if (input !== lastInput) {
+      lastInput = input;
+      stablePolls = 1;
+      continue;
+    }
+    stablePolls += 1;
+    if (stablePolls < 2) continue;
+
     const disabled = !next
       || next.disabled === true
       || next.getAttribute?.("aria-disabled") === "true";
-    if (disabled) continue;
-    next.click();
-    return { step: "PASSWORD_SUBMITTED" };
+    if (input.value === password) {
+      if (disabled) continue;
+      next.click();
+      return { step: "PASSWORD_SUBMITTED" };
+    }
+    if (injectionAttempts >= 3) {
+      return { step: "PASSWORD_INPUT_UNSTABLE" };
+    }
+
+    input.focus();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const focusedInput = document.querySelector("input[name='Passwd'], input[type='password']");
+    if (focusedInput !== input) {
+      lastInput = focusedInput;
+      stablePolls = focusedInput ? 1 : 0;
+      continue;
+    }
+    if (setter) setter.call(input, password); else input.value = password;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    injectionAttempts += 1;
+    await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  return { step: "PASSWORD_FORM_UNAVAILABLE" };
+  return { step: injectionAttempts > 0 ? "PASSWORD_INPUT_UNSTABLE" : "PASSWORD_FORM_UNAVAILABLE" };
 }
 
 function clearPasswordInput() {
@@ -879,10 +904,10 @@ function inspectGeminiActiveAccount(targetEmail) {
     "button[data-ogsr-up][aria-label]",
     "[role='button'][data-ogsr-up][aria-label]"
   ].join(",")));
-  if (controls.length !== 1) return false;
   const pattern = /[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+/gi;
-  const emails = [...new Set(((controls[0].getAttribute("aria-label") || "").match(pattern) || [])
-    .map((email) => email.toLowerCase()))];
+  const emails = [...new Set(controls.flatMap((control) =>
+    (control.getAttribute("aria-label") || "").match(pattern) || []
+  ).map((email) => email.toLowerCase()))];
   return emails.length === 1 && emails[0] === targetEmail.toLowerCase();
 }
 
@@ -916,10 +941,10 @@ function injectPrompt(targetEmail, prompt) {
     "button[data-ogsr-up][aria-label]",
     "[role='button'][data-ogsr-up][aria-label]"
   ].join(",")));
-  if (controls.length !== 1) return { ok: false, error: "TARGET_ACCOUNT_NOT_CONFIRMED" };
   const pattern = /[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+/gi;
-  const emails = [...new Set(((controls[0].getAttribute("aria-label") || "").match(pattern) || [])
-    .map((email) => email.toLowerCase()))];
+  const emails = [...new Set(controls.flatMap((control) =>
+    (control.getAttribute("aria-label") || "").match(pattern) || []
+  ).map((email) => email.toLowerCase()))];
   if (emails.length !== 1 || emails[0] !== targetEmail.toLowerCase()) {
     return { ok: false, error: "TARGET_ACCOUNT_NOT_CONFIRMED" };
   }

@@ -112,6 +112,9 @@ context.document = googleDocument([], true);
 assert.equal(context.inspectGooglePage(target).step, "TARGET_ACCOUNT_NOT_CONFIRMED");
 
 context.document = googleDocument([accountControl(target), accountControl(target)]);
+assert.equal(context.inspectGooglePage(target).step, "PASSWORD_REQUIRED");
+
+context.document = googleDocument([accountControl(target), accountControl(other)]);
 assert.equal(context.inspectGooglePage(target).step, "TARGET_ACCOUNT_NOT_CONFIRMED");
 
 async function main() {
@@ -134,14 +137,17 @@ async function main() {
   context.document = geminiDocument([accountControl(target)]);
   assert.equal(context.inspectGeminiActiveAccount(target), true);
 
+  context.document = geminiDocument([accountControl(target), accountControl(target)]);
+  assert.equal(context.inspectGeminiActiveAccount(target), true);
+
   context.document = geminiDocument([accountControl(target), accountControl(other)]);
   assert.equal(context.inspectGeminiActiveAccount(target), false);
 
   context.document = geminiDocument([accountControl(other)]);
   assert.equal(context.injectPrompt(target, "POC prompt").error, "TARGET_ACCOUNT_NOT_CONFIRMED");
 
-  console.log("PASS google-password-requires-one-selected-account-control");
-  console.log("PASS unrelated-or-multiple-account-evidence-fails-closed");
+  console.log("PASS duplicate-target-account-evidence-is-deduplicated");
+  console.log("PASS unrelated-or-conflicting-account-evidence-fails-closed");
   console.log("PASS stale-password-path-fails-before-dom-write");
   console.log("PASS password-value-is-verified-before-single-submit-click");
   console.log("PASS gemini-active-account-guard-is-strict");

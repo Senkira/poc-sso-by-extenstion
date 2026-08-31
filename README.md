@@ -19,7 +19,7 @@ Production URL: <https://poc-after-sso-login-gemini.web.app/>
 
 ## ติดตั้งบนเครื่องผู้ใช้
 
-1. ดาวน์โหลด `gemini-extension-agent-poc-v0.13.1.zip` จากหน้า Production แล้วแตกไฟล์
+1. ดาวน์โหลด `gemini-extension-agent-poc-v0.13.2.zip` จากหน้า Production แล้วแตกไฟล์
 2. เปิด `edge://extensions` หรือ `chrome://extensions`
 3. เปิด Developer mode แล้วเลือก Load unpacked ที่โฟลเดอร์ `extension`
 4. เปิด Details และเปิด Allow in InPrivate/Incognito หนึ่งครั้ง
@@ -76,7 +76,7 @@ Cloud Function ใช้ Node.js 22, `minInstances: 0` และ scale to zero �
 ## E2E acceptance
 
 1. ปิด InPrivate/Incognito windows ทั้งหมดเพื่อล้าง isolated Google session
-2. Reload Extension v0.13.1 และเปิด Allow in InPrivate/Incognito
+2. Reload Extension v0.13.2 และเปิด Allow in InPrivate/Incognito
 3. เปิด Production URL แล้วกด Login ครั้งเดียว
 4. ผู้ใช้ต้องไม่กรอกหรือคลิก Google login UI
 5. หน้า POC ต้องแสดง credential delivered once และ `GEMINI_TARGET_ACCOUNT_CONFIRMED`
