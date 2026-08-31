@@ -52,6 +52,8 @@ Extension ไม่ทำ:
 
 v0.5.0 เปลี่ยน launch context เป็น InPrivate เพื่อทดสอบ no-SSO architecture ที่ไม่ reuse Google cookies เดิม แต่ยังให้ Edge/Chrome Password Manager ใช้ saved credential จาก parent profile ได้ การมี saved credential เป็น prerequisite เท่านั้น ต้องผ่าน live E2E จึงจะเรียกว่า zero-touch success ได้
 
+Live E2E บน Edge เมื่อวันที่ 2026-08-31 ยืนยันว่า production Firebase เชื่อมต่อ extension v0.5.0 ผ่าน protocol 4, สร้าง InPrivate และส่งบัญชีเป้าหมายจนถึง `EMAIL_SUBMITTED` ที่ `accounts.google.com` ได้จริง แต่จบที่ `USER_ACTION_REQUIRED` เพราะ profile ที่ทดสอบยังไม่มี browser-managed credential หรือ silent authentication ที่ใช้ได้ ไม่พบ Gemini document และ target account ยังเป็น `Pending` ดังนั้นผลรอบนี้พิสูจน์ launch/orchestration และ fail-closed เท่านั้น ยังไม่พิสูจน์ successful zero-touch authentication
+
 ## Install once in Chrome or Edge
 
 1. ดาวน์โหลด ZIP จาก <https://poc-after-sso-login-gemini.web.app/downloads/gemini-sso-launcher-extension-v0.5.0.zip> และแตกไฟล์
