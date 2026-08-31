@@ -1,6 +1,6 @@
 {
   "functions": {
-    "source": "functions",
+    "source": "backend-api",
     "runtime": "nodejs22"
   },
   "auth": {
@@ -10,7 +10,7 @@
   },
   "hosting": {
     "site": "poc-after-sso-login-gemini",
-    "public": "public",
+    "public": "frontend-web",
     "ignore": [
       "firebase.json",
       "**/.*",

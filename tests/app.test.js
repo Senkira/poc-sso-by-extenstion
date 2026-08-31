@@ -100,7 +100,7 @@ const context = {
   encodeURIComponent
 };
 
-vm.runInNewContext(fs.readFileSync("public/app.js", "utf8"), context);
+vm.runInNewContext(fs.readFileSync("frontend-web/app.js", "utf8"), context);
 
 async function flush(rounds = 6) {
   for (let index = 0; index < rounds; index += 1) {

@@ -1,19 +1,19 @@
 $ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$manifest = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'extension\manifest.json') | ConvertFrom-Json
-$worker = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'extension\service-worker.js')
-$content = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'extension\content-script.js')
-$app = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'public\app.js')
-$html = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'public\index.html')
-$broker = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'functions\index.js')
-$brokerCore = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'functions\broker-core.js')
+$manifest = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'browser-extension\manifest.json') | ConvertFrom-Json
+$worker = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'browser-extension\service-worker.js')
+$content = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'browser-extension\content-script.js')
+$app = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'frontend-web\app.js')
+$html = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'frontend-web\index.html')
+$broker = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'backend-api\index.js')
+$brokerCore = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'backend-api\broker-core.js')
 $firebase = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'firebase.json') | ConvertFrom-Json
-$functionsPackage = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'functions\package.json') | ConvertFrom-Json
+$functionsPackage = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'backend-api\package.json') | ConvertFrom-Json
 $expectedExtensionId = 'jeenmgigpkffleijbmfciffiodlcdafh'
 $brokerHostPermission = 'https://us-central1-poc-after-sso-login-gemini.cloudfunctions.net/*'
 $archiveName = "gemini-extension-agent-poc-v$($manifest.version).zip"
-$archivePath = Join-Path $projectRoot "public\downloads\$archiveName"
+$archivePath = Join-Path $projectRoot "frontend-web\downloads\$archiveName"
 
 if ($manifest.manifest_version -ne 3) { throw 'Manifest V3 is required.' }
 if ($manifest.version -ne '0.13.2') { throw 'Unexpected extension version.' }
@@ -40,7 +40,7 @@ if ($worker -match 'chrome\.storage\.(local|sync)' -or $worker -notmatch 'chrome
 if (($worker + $app + $html + $broker + $brokerCore) -match '(?i)@[s]{2}w0rd') { throw 'A password-like literal is present in source.' }
 if ($broker -notmatch 'defineSecret\("GEMINI_TARGET_PASSWORD"\)' -or $broker -notmatch 'defineSecret\("POC_FIREBASE_PASSWORD"\)' -or $broker -notmatch 'verifyIdToken' -or $broker -notmatch 'accounts:signInWithPassword') { throw 'Backend secrets or Firebase authorization gate is missing.' }
 if ($broker -notmatch 'minInstances: 0' -or $brokerCore -notmatch [regex]::Escape("chrome-extension://$expectedExtensionId")) { throw 'Broker scaling or exact extension-origin gate is missing.' }
-if ($firebase.functions.source -ne 'functions' -or $firebase.functions.runtime -ne 'nodejs22') { throw 'Firebase Functions runtime is not configured.' }
+if ($firebase.functions.source -ne 'backend-api' -or $firebase.functions.runtime -ne 'nodejs22') { throw 'Firebase Functions runtime is not configured.' }
 if ($functionsPackage.engines.node -ne '22') { throw 'Backend Node runtime mismatch.' }
 if ($firebase.hosting.site -ne 'poc-after-sso-login-gemini') { throw 'Wrong Firebase Hosting site.' }
 if ($firebase.auth.providers.emailPassword -ne $true) { throw 'Firebase Email/Password provider configuration is missing.' }
@@ -53,13 +53,13 @@ if ($worker -notmatch 'OPENING_ISOLATED_GEMINI_TAB' -or $worker -notmatch 'tabs\
 if ($worker -notmatch 'startAgentTail' -or $worker -notmatch 'startAgentUnlocked') { throw 'Concurrent agent starts are not serialized.' }
 if (Test-Path -LiteralPath (Join-Path $projectRoot 'bootstrap')) { throw 'Endpoint bootstrap directory must not ship.' }
 if (Test-Path -LiteralPath (Join-Path $projectRoot 'package.json')) { throw 'Endpoint/root Node runtime dependency is forbidden.' }
-if (-not (Test-Path -LiteralPath (Join-Path $projectRoot 'functions\package-lock.json'))) { throw 'Backend dependency lock is missing.' }
+if (-not (Test-Path -LiteralPath (Join-Path $projectRoot 'backend-api\package-lock.json'))) { throw 'Backend dependency lock is missing.' }
 if (-not (Test-Path -LiteralPath $archivePath)) { throw 'Packaged extension archive is missing.' }
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [IO.Compression.ZipFile]::OpenRead($archivePath)
 try {
-  $expectedEntries = @('extension/content-script.js', 'extension/manifest.json', 'extension/service-worker.js')
+  $expectedEntries = @('browser-extension/content-script.js', 'browser-extension/manifest.json', 'browser-extension/service-worker.js')
   $actualEntries = @($archive.Entries | Where-Object { -not [string]::IsNullOrEmpty($_.Name) } | ForEach-Object { $_.FullName.Replace('\', '/') } | Sort-Object)
   if (($actualEntries -join '|') -ne (($expectedEntries | Sort-Object) -join '|')) { throw 'Extension archive contains unexpected files.' }
   foreach ($entryName in $expectedEntries) {

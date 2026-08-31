@@ -6,24 +6,48 @@ Production URL: <https://poc-after-sso-login-gemini.web.app/>
 
 ## Architecture และเส้นทางข้อมูล
 
-โค้ดทั้งระบบอยู่ใน repository เดียวกัน:
+โค้ดที่ใช้งานจริงทั้งระบบอยู่ใน repository เดียวกัน และแยกชื่อโฟลเดอร์ตามหน้าที่ชัดเจน:
 
 | ส่วน | ตำแหน่ง | Runtime |
 | --- | --- | --- |
-| Web UI | `public/` | Firebase Hosting / browser tab ปกติ |
-| Credential API | `functions/` | Firebase Functions v2 บน GCP |
-| Edge/Chrome agent | `extension/` | Manifest V3 service worker และ content script |
+| Frontend Web | `frontend-web/` | Firebase Hosting / browser tab ปกติ |
+| Backend API | `backend-api/` | Firebase Functions v2 บน GCP |
+| Edge/Chrome Extension | `browser-extension/` | Manifest V3 service worker และ content script |
+| Automated tests | `tests/` และ `backend-api/test/` | Development/CI เท่านั้น |
+| Legacy reference | `docs/legacy-reference-agent/` | เอกสารอ้างอิง ไม่ถูก build หรือ deploy |
 
-Password ของ Google **ไม่ผ่าน `public/app.js` และไม่ถูกส่งให้หน้า Web UI** เส้นทางจริงคือ Cloud Function ส่ง HTTPS response ตรงไปที่ Extension service worker จากนั้น service worker ส่งค่าเป็น argument ชั่วคราวให้ script ที่รันใน exact Google document เท่านั้น
+```text
+poc-sso-by-extenstion/
+├── frontend-web/             # หน้าเว็บหลักที่ Firebase Hosting deploy
+│   ├── index.html            # UI และ DOM หลัก
+│   ├── app.js                # Login click, Extension messages, status polling
+│   ├── styles.css            # รูปแบบหน้าเว็บ
+│   └── downloads/            # ZIP Extension ที่หน้า Production แจก
+├── backend-api/              # หลังบ้านจริงบน GCP
+│   ├── index.js              # Cloud Function credentialBroker
+│   ├── broker-core.js        # Request schema, origin/token helpers, constants
+│   ├── package.json          # Cloud runtime/dependencies
+│   └── test/                 # Backend unit tests
+├── browser-extension/        # Agent ที่ติดตั้งใน Edge/Chrome
+│   ├── manifest.json         # Permissions, fixed ID, allowed web origin
+│   ├── service-worker.js     # Process หลัก: auth, broker, isolate, Google automation
+│   └── content-script.js     # ตรวจ account บน Gemini document
+├── scripts/                  # Package และ verify ทั้งระบบ
+├── tests/                    # Frontend/Extension contract tests
+├── firebase.json             # ชี้ Hosting -> frontend-web, Functions -> backend-api
+└── docs/legacy-reference-agent/ # โค้ดเก่าเพื่ออ้างอิง ไม่ใช่ runtime ปัจจุบัน
+```
+
+Password ของ Google **ไม่ผ่าน `frontend-web/app.js` และไม่ถูกส่งให้หน้า Web UI** เส้นทางจริงคือ Cloud Function ส่ง HTTPS response ตรงไปที่ Extension service worker จากนั้น service worker ส่งค่าเป็น argument ชั่วคราวให้ script ที่รันใน exact Google document เท่านั้น
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor User
-    participant Web as Firebase Hosting<br/>public/app.js
+    participant Web as Firebase Hosting<br/>frontend-web/app.js
     participant Edge as Edge extension router<br/>chrome.runtime
-    participant SW as Extension service worker<br/>extension/service-worker.js
-    participant API as credentialBroker<br/>functions/index.js
+    participant SW as Extension service worker<br/>browser-extension/service-worker.js
+    participant API as credentialBroker<br/>backend-api/index.js
     participant Auth as Firebase Auth<br/>Identity Toolkit
     participant SM as GCP Secret Manager
     participant Google as Edge InPrivate<br/>accounts.google.com
@@ -69,13 +93,13 @@ sequenceDiagram
 
 Edge ใช้ Chromium Extension API จึงเรียก namespace `chrome.*` เหมือน Chrome แม้ตัว browser จะเป็น Microsoft Edge การเชื่อมต่อไม่ได้ใช้ localhost, custom protocol, Native Messaging หรือ PowerShell แต่ใช้ extension routing ภายใน browser ดังนี้:
 
-1. `extension/manifest.json` มี `key` คงที่ ทำให้ build แบบ unpacked ได้ Extension ID คงที่ `jeenmgigpkffleijbmfciffiodlcdafh`
+1. `browser-extension/manifest.json` มี `key` คงที่ ทำให้ build แบบ unpacked ได้ Extension ID คงที่ `jeenmgigpkffleijbmfciffiodlcdafh`
 2. `externally_connectable.matches` อนุญาตเฉพาะ `https://poc-after-sso-login-gemini.web.app/*`
-3. `public/app.js/sendToExtension(message)` เรียก `chrome.runtime.sendMessage(EXTENSION_ID, message, callback)`
-4. Edge หา Extension จาก ID แล้วส่ง message เข้า `chrome.runtime.onMessageExternal` ใน `extension/service-worker.js`
+3. `frontend-web/app.js/sendToExtension(message)` เรียก `chrome.runtime.sendMessage(EXTENSION_ID, message, callback)`
+4. Edge หา Extension จาก ID แล้วส่ง message เข้า `chrome.runtime.onMessageExternal` ใน `browser-extension/service-worker.js`
 5. `isAllowedExternalSender(sender)` ตรวจ origin ของ sender ซ้ำก่อน dispatch ไปยัง `pingExtension`, `authenticatePoc`, `startAgent`, `getStatus`, `postPrompt` หรือ `cancelRun`
 
-ดังนั้นเครื่องใหม่ต้องติดตั้ง Extension ที่ใช้ manifest key เดิมและเปิด Allow in InPrivate/Incognito ถ้าเปลี่ยน manifest key หรือ Extension ID ต้องแก้ทั้ง `EXTENSION_ID` ใน `public/app.js` และ `EXTENSION_ORIGIN`/CORS ใน backend ให้ตรงกัน
+ดังนั้นเครื่องใหม่ต้องติดตั้ง Extension ที่ใช้ manifest key เดิมและเปิด Allow in InPrivate/Incognito ถ้าเปลี่ยน manifest key หรือ Extension ID ต้องแก้ทั้ง `EXTENSION_ID` ใน `frontend-web/app.js` และ `EXTENSION_ORIGIN`/CORS ใน backend ให้ตรงกัน
 
 ### Message และ API contract
 
@@ -135,7 +159,7 @@ Backend ทำงานตามลำดับ `validateCredentialRequest()` �
 
 1. ดาวน์โหลด `gemini-extension-agent-poc-v0.13.2.zip` จากหน้า Production แล้วแตกไฟล์
 2. เปิด `edge://extensions` หรือ `chrome://extensions`
-3. เปิด Developer mode แล้วเลือก Load unpacked ที่โฟลเดอร์ `extension`
+3. เปิด Developer mode แล้วเลือก Load unpacked ที่โฟลเดอร์ `browser-extension`
 4. เปิด Details และเปิด Allow in InPrivate/Incognito หนึ่งครั้ง
 5. กลับหน้า Production และตรวจว่าแสดง `Connected`
 
@@ -163,8 +187,8 @@ Production ที่ต้องป้องกัน password จาก endpoin
 Node.js ใช้เฉพาะเครื่องพัฒนาและ managed backend ไม่อยู่ใน endpoint package
 
 ```powershell
-npm install --prefix .\functions
-npm test --prefix .\functions
+npm install --prefix .\backend-api
+npm test --prefix .\backend-api
 powershell -ExecutionPolicy Bypass -File .\scripts\package-extension.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1
 node .\tests\static.test.js

@@ -41,7 +41,7 @@ const context = vm.createContext({
   location: { pathname: "/v3/signin/challenge/pwd" },
   document: null
 });
-vm.runInContext(fs.readFileSync("extension/service-worker.js", "utf8"), context);
+vm.runInContext(fs.readFileSync("browser-extension/service-worker.js", "utf8"), context);
 
 function accountControl(email, extra = {}) {
   return {

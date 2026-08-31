@@ -152,7 +152,7 @@ const context = {
   setTimeout(callback, delayMs) { if (delayMs <= 1000) Promise.resolve().then(callback); return 1; },
   clearTimeout() {}
 };
-const workerSource = fs.readFileSync("extension/service-worker.js", "utf8");
+const workerSource = fs.readFileSync("browser-extension/service-worker.js", "utf8");
 function loadWorker() {
   vm.runInNewContext(workerSource, { ...context });
 }
@@ -381,7 +381,7 @@ async function main() {
   );
   assert.equal(rejected.error, "UNTRUSTED_SENDER");
 
-  const source = fs.readFileSync("extension/service-worker.js", "utf8");
+  const source = fs.readFileSync("browser-extension/service-worker.js", "utf8");
   assert.doesNotMatch(source, /@[s]{2}w0rd/i);
   assert.doesNotMatch(source, /chrome\.storage\.(local|sync)/);
   assert.doesNotMatch(source, /sendNativeMessage|nativeMessaging|NATIVE_HOST/);

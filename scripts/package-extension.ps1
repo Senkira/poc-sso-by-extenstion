@@ -1,9 +1,9 @@
 $ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$extensionDirectory = Join-Path $projectRoot 'extension'
-$downloads = Join-Path $projectRoot 'public\downloads'
-$manifest = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'extension\manifest.json') | ConvertFrom-Json
+$extensionDirectory = Join-Path $projectRoot 'browser-extension'
+$downloads = Join-Path $projectRoot 'frontend-web\downloads'
+$manifest = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'browser-extension\manifest.json') | ConvertFrom-Json
 $archive = Join-Path $downloads "gemini-extension-agent-poc-v$($manifest.version).zip"
 
 New-Item -ItemType Directory -Path $downloads -Force | Out-Null

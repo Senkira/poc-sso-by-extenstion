@@ -3,19 +3,19 @@
 const assert = require("assert/strict");
 const fs = require("fs");
 
-const manifest = JSON.parse(fs.readFileSync("extension/manifest.json", "utf8"));
-const app = fs.readFileSync("public/app.js", "utf8");
-const html = fs.readFileSync("public/index.html", "utf8");
-const worker = fs.readFileSync("extension/service-worker.js", "utf8");
-const broker = fs.readFileSync("functions/index.js", "utf8");
-const brokerCore = fs.readFileSync("functions/broker-core.js", "utf8");
+const manifest = JSON.parse(fs.readFileSync("browser-extension/manifest.json", "utf8"));
+const app = fs.readFileSync("frontend-web/app.js", "utf8");
+const html = fs.readFileSync("frontend-web/index.html", "utf8");
+const worker = fs.readFileSync("browser-extension/service-worker.js", "utf8");
+const broker = fs.readFileSync("backend-api/index.js", "utf8");
+const brokerCore = fs.readFileSync("backend-api/broker-core.js", "utf8");
 const firebase = JSON.parse(fs.readFileSync("firebase.json", "utf8"));
 
 assert.equal(manifest.version, "0.13.2");
 assert.match(worker, /AUTH_TIMEOUT_MINUTES = 15/);
 assert.match(worker, /RUN_TTL_MS = 20 \* 60 \* 1000/);
 assert.match(app, /POLL_TIMEOUT_MS = 20 \* 60 \* 1000/);
-assert.match(fs.readFileSync("extension/content-script.js", "utf8"), /MAX_IDENTITY_ATTEMPTS = 900/);
+assert.match(fs.readFileSync("browser-extension/content-script.js", "utf8"), /MAX_IDENTITY_ATTEMPTS = 900/);
 assert.equal(manifest.incognito, "spanning");
 assert.equal(manifest.permissions.includes("nativeMessaging"), false);
 assert.equal(manifest.permissions.includes("alarms"), true);
@@ -68,7 +68,7 @@ assert.match(worker, /chrome\.tabs\.remove/);
 assert.match(worker, /geminiReloaded/);
 assert.doesNotMatch(html, /type=["']password["']/i);
 assert.equal(firebase.auth.providers.emailPassword, true);
-assert.equal(firebase.functions.source, "functions");
+assert.equal(firebase.functions.source, "backend-api");
 assert.equal(firebase.functions.runtime, "nodejs22");
 assert.doesNotMatch(firebase.hosting.headers[0].headers[0].value, /identitytoolkit\.googleapis\.com/);
 assert.doesNotMatch(`${app}\n${html}\n${worker}\n${broker}\n${brokerCore}`, /@[s]{2}w0rd/i);
