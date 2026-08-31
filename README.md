@@ -17,6 +17,8 @@ Chrome และ Edge ใช้ extension package เดียวกัน เ�
 
 ข้อจำกัดที่ตั้งไว้คือไม่มี SSO, local server, Node.js, PowerShell, custom protocol, Native Messaging, Functions หรือ Cloud Run ใน runtime ของเครื่องปลายทาง และ extension ห้ามรับ/เก็บ/inject Google password ภายใต้ขอบเขตนี้ไม่มี credential authority ที่สามารถมอบหลักฐานยืนยันตัวตนให้ Google ได้ การกด Login บนเว็บ POC ไม่สามารถสร้าง Google session ได้เอง
 
+Red-team เพิ่มพบ test-only loophole ผ่าน `chrome.debugger` + CDP virtual WebAuthn แต่ต้องเก็บ Google-registered private key และจำลอง user presence/verification จึงไม่ใช่ secretless หรือ supported production authentication Production extension นี้จงใจไม่ขอ `debugger` permission และ verifier ห้ามทั้ง virtual authenticator กับ reusable private key รายละเอียดอยู่ใน architecture decision
+
 Isolation ใน POC นี้คือ **ephemeral InPrivate cookie/site-data store** ซึ่งถูกล้างเมื่อปิด InPrivate windows ทั้งหมด ไม่ใช่ persistent profile หรือ `--user-data-dir` เพราะ extension API ไม่มีความสามารถเลือกหรือสร้าง browser profile แบบนั้น
 
 ## Credential boundary

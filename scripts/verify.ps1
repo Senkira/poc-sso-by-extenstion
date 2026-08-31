@@ -23,6 +23,7 @@ if ($manifest.manifest_version -ne 3) { throw 'Manifest V3 is required.' }
 if ($manifest.externally_connectable.matches -notcontains $expectedOrigin) { throw 'Hosted origin is not allowlisted.' }
 if ($manifest.permissions -contains 'nativeMessaging') { throw 'nativeMessaging is forbidden.' }
 if ($manifest.permissions -contains 'cookies') { throw 'cookies permission is forbidden.' }
+if ($manifest.permissions -contains 'debugger') { throw 'Debugger-driven virtual authenticators are forbidden in the production extension.' }
 if ($manifest.permissions -notcontains 'scripting') { throw 'scripting is required for non-secret Google page controls.' }
 if ($app -notmatch [regex]::Escape($expectedExtensionId)) { throw 'Hosted app extension ID does not match the fixed manifest key.' }
 if ($app -notmatch [regex]::Escape("REQUIRED_EXTENSION_VERSION = `"$($manifest.version)`"")) { throw 'Hosted app does not require the packaged extension version.' }
@@ -37,6 +38,7 @@ if ($html -match '(?i)(https?://)?(localhost|127\.0\.0\.1)(:\d+)?') { throw 'Hos
 if ($worker -match 'PASS_PASSWORD|submitGooglePassword|openCredentialPassThrough|login\.html|credentialChallengeId') { throw 'Credential bridge code is forbidden.' }
 if ($worker -match "input\[type=['`"]password|input\[name=['`"]Passwd") { throw 'Extension must not query credential inputs.' }
 if ($worker -match 'chrome\.cookies|chrome\.identity') { throw 'Cookie and OAuth token shortcuts are forbidden.' }
+if ($worker -match 'chrome\.debugger|WebAuthn\.|addVirtualAuthenticator|setAutomaticPresenceSimulation|privateKey') { throw 'Virtual WebAuthn credentials or simulated user verification are forbidden.' }
 $forbiddenPasswordGate = "[data-profile-identifier],[data-email],[data-identifier],[role='link']"
 if ($worker.Contains($forbiddenPasswordGate)) { throw 'Generic role-link text must not authorize a password submission.' }
 if ($contentScript -match [regex]::Escape('[aria-label],[title],[data-email],[data-identifier]')) { throw 'Gemini identity detection must not scan every labelled element.' }
@@ -103,4 +105,5 @@ Write-Output 'PASS no-node-project-dependency'
 Write-Output 'PASS no-credential-page-or-message-path'
 Write-Output 'PASS no-password-input-query'
 Write-Output 'PASS no-cookie-or-oauth-shortcut'
+Write-Output 'PASS no-debugger-or-virtual-authenticator'
 Write-Output 'PASS strict-account-control-provenance'

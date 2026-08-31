@@ -13,7 +13,7 @@
 
 ## Current verdict
 
-**Static Firebase Hosting + extension-only ไม่สามารถทำข้อ 3 แบบ deterministic และปลอดภัยภายใต้ requirement ทั้งหมดพร้อมกันได้**
+**Static Firebase Hosting + extension-only ไม่สามารถทำข้อ 3 แบบ deterministic และปลอดภัยภายใต้ requirement ทั้งหมดพร้อมกันได้ เมื่อ client ห้าม persist reusable authentication proof ทุกชนิด**
 
 Extension สามารถควบคุมหน้าเว็บและกรอก DOM ชั่วคราวได้ในเชิงกลไก แต่ก่อนทำเช่นนั้นต้องได้รับ Google password หรือ authentication proof จากที่ใดที่หนึ่ง ขอบเขตปัจจุบันตัดแหล่งที่มาที่เชื่อถือได้ออกทั้งหมด:
 
@@ -26,6 +26,18 @@ Extension สามารถควบคุมหน้าเว็บและ�
 | reuse/copy Google cookies | cookie คือ bearer credential, ทำลาย isolation และไม่ใช่ supported login flow |
 | backend vault/credential broker | เป็น solution boundary ที่เป็นไปได้ แต่ผิดข้อ 5 และยังรับประกันว่าจะไม่มี MFA/CAPTCHA/risk challenge ไม่ได้ |
 | Google federation/SSO | เป็น supported direction แต่ถูกตัดออกโดย requirement |
+
+### Red-team finding: virtual WebAuthn loophole
+
+หลังตรวจซ้ำพบช่องทางเชิงกลไกที่ต้องแยกออกจาก production solution ให้ชัด: extension ที่ขอสิทธิ์ `debugger` สามารถส่ง Chrome DevTools Protocol คำสั่งใน WebAuthn domain เพื่อสร้าง virtual authenticator, import credential private key และจำลอง user presence/user verification ได้
+
+ถ้า enroll public key นั้นกับ Google ไว้หนึ่งครั้งและ Google ยอมรับ assertion ใน fresh InPrivate run กลไกนี้อาจเข้า Gemini โดยไม่ใช้ password/cookie/token ได้ แต่ไม่ได้แก้ credential-source problem เพราะต้อง persist **Google-registered WebAuthn private key** ระหว่าง browser restarts นอกจากนี้ CDP ระบุว่าความสามารถนี้มีไว้ทดสอบ WebAuthn API, เป็น experimental และจำลอง security boundary ที่ real authenticator ตั้งใจบังคับ
+
+ดังนั้นข้อสรุป formal ต้องห้าม reusable authentication proof ทุกชนิด ไม่ใช่ห้ามเพียง password/cookie/token:
+
+> extension, static assets และ managed policy ห้าม persist authentication private key หรือ reusable authentication proof ทุกชนิด
+
+ภายใต้เงื่อนไขนี้ virtual authenticator ไม่ใช่ loophole อีกต่อไป Production extension จึงห้ามขอ `debugger` permission, ห้ามใช้ CDP WebAuthn และห้ามเก็บ passkey private key การทดลองกลไกนี้ทำได้เฉพาะ throwaway spike ด้วย disposable account เท่านั้น ห้ามใช้บัญชีองค์กรจริงและห้ามเรียกว่า supported solution
 
 การเข้ารหัส Google password ด้วย POC password ไม่แก้ปัญหา: static client ต้องมี ciphertext, salt, KDF และโค้ดถอดรหัสครบ ผู้โจมตีจึงทำ offline guessing ได้ และ plaintext ยังต้องปรากฏใน browser/extension memory หลังถอดรหัส
 
